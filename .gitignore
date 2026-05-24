@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+venv/
+env/
+server1/
+
+# PaddleOCR models
+data/models/
+*.pdparams
+*.pdmodel
+*.pdiparams
+
+# Processed data
+data/images/
+data/processed/
+
+# Session files
+data/sessions/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

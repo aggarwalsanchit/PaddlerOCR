@@ -611,7 +611,7 @@ def load_latest_ocr_model():
 
     OCR_MODEL = PaddleOCR(
         use_angle_cls=False,
-        # use_gpu=False,
+        # use_gpu=False, 
 
         # disable default models
         det_model_dir=None,
