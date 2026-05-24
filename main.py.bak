@@ -30,7 +30,6 @@ import numpy as np
 import google.generativeai as genai
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse
-from paddleocr import PaddleOCR
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -44,7 +43,7 @@ PROCESSED_DIR = DATA_DIR / "processed"
 LABELS_DIR    = DATA_DIR / "labels"
 MODELS_DIR    = DATA_DIR / "models"
 DICT_FILE     = DATA_DIR / "dict" / "digital_dict.txt"
-SESSIONS_DIR  = DATA_DIR / "sessions"
+SESSION_FILE  = DATA_DIR / "session_state.json"
 WORK_DIR      = BASE_DIR / "work"
 PADDLEOCR_DIR = WORK_DIR / "PaddleOCR"
 
@@ -53,15 +52,14 @@ OLD_IMAGES_SAMPLE      = 1
 TOTAL_BEFORE_TRAIN     = NEW_IMAGES_PER_SESSION + OLD_IMAGES_SAMPLE
 
 for _d in [IMAGES_DIR, PROCESSED_DIR, LABELS_DIR,
-           MODELS_DIR, DICT_FILE.parent, WORK_DIR, SESSIONS_DIR]:
+           MODELS_DIR, DICT_FILE.parent, WORK_DIR]:
     _d.mkdir(parents=True, exist_ok=True)
 
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
 app = FastAPI(title="PaddleOCR Incremental Trainer", version="3.1.0")
-OCR_MODEL = None
-OCR_MODEL_VERSION = None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OPENCV PREPROCESSING
@@ -128,91 +126,18 @@ def _default_state() -> dict:
         "total_labels_written": 0,
     }
 
-def get_session_file(session_id: str) -> Path:
-    return SESSIONS_DIR / f"{session_id}.json"
 
-
-def load_state(session_id: Optional[str] = None) -> dict:
-    """
-    Load latest session or specific session.
-    """
-
-    if session_id:
-        sf = get_session_file(session_id)
-
-        if sf.exists():
-            try:
-                return json.loads(sf.read_text())
-            except Exception:
-                return _default_state()
-
-        return _default_state()
-
-    # latest session
-    session_files = sorted(
-        SESSIONS_DIR.glob("*.json"),
-        key=os.path.getmtime,
-        reverse=True
-    )
-
-    if not session_files:
-        return _default_state()
-
-    try:
-        return json.loads(session_files[0].read_text())
-    except Exception:
-        return _default_state()
+def load_state() -> dict:
+    if SESSION_FILE.exists():
+        try:
+            return json.loads(SESSION_FILE.read_text())
+        except Exception:
+            pass
+    return _default_state()
 
 
 def save_state(state: dict):
-    """
-    Save each session separately.
-    """
-
-    session_id = state.get("session_id")
-
-    if not session_id:
-        return
-
-    sf = get_session_file(session_id)
-
-    sf.write_text(
-        json.dumps(state, indent=2, default=str)
-    )
-
-
-def load_all_sessions():
-    """
-    Load all sessions sorted newest first.
-    """
-
-    sessions = []
-
-    session_files = sorted(
-        SESSIONS_DIR.glob("*.json"),
-        key=os.path.getmtime,
-        reverse=True
-    )
-
-    for sf in session_files:
-        try:
-            data = json.loads(sf.read_text())
-            sessions.append(data)
-        except Exception:
-            continue
-
-    return sessions
-# def load_state() -> dict:
-#     if SESSION_FILE.exists():
-#         try:
-#             return json.loads(SESSION_FILE.read_text())
-#         except Exception:
-#             pass
-#     return _default_state()
-
-
-# def save_state(state: dict):
-#     SESSION_FILE.write_text(json.dumps(state, indent=2, default=str))
+    SESSION_FILE.write_text(json.dumps(state, indent=2, default=str))
 
 
 def next_version() -> str:
@@ -507,32 +432,6 @@ async def run_training(state: dict):
         state["status"]    = "done"
         state["train_end"] = datetime.utcnow().isoformat()
         state["error"]     = None
-        
-        # Export inference model
-        export_cmd = [
-            sys.executable,
-            "tools/export_model.py",
-            "-c", "configs/rec/PP-OCRv3/en_PP-OCRv3_mobile_rec.yml",
-            "-o",
-            f"Global.pretrained_model={str(output_dir / 'best_accuracy')}",
-            f"Global.save_inference_dir={str(output_dir / 'inference')}",
-        ]
-        
-        export_proc = await asyncio.create_subprocess_exec(
-            *export_cmd,
-            cwd=str(PADDLEOCR_DIR),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        
-        export_out, _ = await export_proc.communicate()
-        
-        if export_proc.returncode != 0:
-            raise RuntimeError(
-                f"Model export failed:\n{export_out.decode(errors='replace')}"
-            )
-        
-        print("[Training] Inference model exported")
         print(f"[Training] Complete: {output_dir}/best_accuracy.pdparams")
 
     except Exception as e:
@@ -577,57 +476,6 @@ async def prepare_and_train(state: dict):
 # ENDPOINTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_latest_ocr_model():
-    """
-    Load latest trained PaddleOCR model for inference.
-    """
-
-    global OCR_MODEL
-    global OCR_MODEL_VERSION
-
-    trained_versions = sorted(
-        [p for p in MODELS_DIR.glob("v*/") if p.is_dir()],
-        key=lambda p: int(p.name.replace("v", ""))
-    )
-
-    if not trained_versions:
-        return None
-
-    latest = trained_versions[-1]
-    latest_version = latest.name
-
-    # already loaded
-    if OCR_MODEL and OCR_MODEL_VERSION == latest_version:
-        return OCR_MODEL
-
-    infer_model_dir = latest / "inference"
-
-    if not infer_model_dir.exists():
-        raise Exception(
-            f"Inference model not found: {infer_model_dir}"
-        )
-
-    print(f"[OCR] Loading model: {latest_version}")
-
-    OCR_MODEL = PaddleOCR(
-        use_angle_cls=False,
-        # use_gpu=False,
-
-        # disable default models
-        det_model_dir=None,
-        cls_model_dir=None,
-
-        # your custom recognition model
-        rec_model_dir=str(infer_model_dir),
-
-        # IMPORTANT
-        # rec_algorithm="SVTR_LCNet",
-    )
-
-    OCR_MODEL_VERSION = latest_version
-
-    return OCR_MODEL
-    
 @app.post("/upload")
 async def upload_image(
     background_tasks: BackgroundTasks,
@@ -733,61 +581,52 @@ async def upload_image(
 
 @app.get("/status")
 async def get_status():
-    """
-    Return ALL sessions + system info.
-    """
-
-    sessions = load_all_sessions()
+    """Overall system status + full version history + incremental chain info."""
+    state = load_state()
 
     trained = sorted(
         [p.parent.name for p in MODELS_DIR.glob("v*/best_accuracy.pdparams")],
         key=lambda x: int(x.replace("v", "")) if x.replace("v", "").isdigit() else 0,
     )
 
-    label_files = sorted(
-        [p.name for p in LABELS_DIR.glob("label_v*.txt")]
-    )
-
+    label_files  = sorted([p.name for p in LABELS_DIR.glob("label_v*.txt")])
     total_images = len([
         p for p in IMAGES_DIR.glob("*")
         if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
     ])
-
-    total_proc = len(
-        list(PROCESSED_DIR.glob("*_gray.png"))
-    )
-
-    prev_ckpt = find_previous_checkpoint()
+    total_proc = len(list(PROCESSED_DIR.glob("*_gray.png")))
+    prev_ckpt  = find_previous_checkpoint()
 
     return {
-        "total_sessions": len(sessions),
-
-        "sessions": sessions,
-
+        "current_session": {
+            "session_id":           state.get("session_id"),
+            "status":               state.get("status", "idle"),
+            "model_version":        state.get("model_version"),
+            "new_images_count":     len(state.get("new_images", [])),
+            "sampled_old_count":    len(state.get("sampled_old", [])),
+            "total_labels_written": state.get("total_labels_written", 0),
+            "label_file":           state.get("label_file"),
+            "train_start":          state.get("train_start"),
+            "train_end":            state.get("train_end"),
+            "error":                state.get("error"),
+        },
         "incremental_chain": {
-            "trained_versions": trained,
-            "next_version": f"v{len(trained) + 1}",
-            "prev_checkpoint":
-                str(prev_ckpt) + ".pdparams"
-                if prev_ckpt else None,
-            "chain":
-                " -> ".join(
-                    trained + [f"v{len(trained)+1}(next)"]
-                ),
+            "trained_versions":   trained,
+            "next_version":       f"v{len(trained) + 1}",
+            "prev_checkpoint":    str(prev_ckpt) + ".pdparams" if prev_ckpt else None,
+            "chain":              " -> ".join(trained + [f"v{len(trained)+1}(next)"]),
         },
-
         "storage": {
-            "total_images": total_images,
+            "total_images":     total_images,
             "processed_images": total_proc,
-            "label_files": label_files,
-            "models_dir": str(MODELS_DIR),
-            "processed_dir": str(PROCESSED_DIR),
+            "label_files":      label_files,
+            "models_dir":       str(MODELS_DIR),
+            "processed_dir":    str(PROCESSED_DIR),
         },
-
         "thresholds": {
             "new_images_per_session": NEW_IMAGES_PER_SESSION,
-            "old_images_sampled": OLD_IMAGES_SAMPLE,
-            "total_before_training": TOTAL_BEFORE_TRAIN,
+            "old_images_sampled":     OLD_IMAGES_SAMPLE,
+            "total_before_training":  TOTAL_BEFORE_TRAIN,
         },
     }
 
@@ -795,12 +634,12 @@ async def get_status():
 @app.get("/status/{session_id}")
 async def get_session_status(session_id: str):
     """Detailed status for a specific session including progress."""
-    state = load_state(session_id)
-    # if state.get("session_id") != session_id:
-    #     raise HTTPException(
-    #         status_code=404,
-    #         detail=f"Session '{session_id}' not found. Current: {state.get('session_id')}",
-    #     )
+    state = load_state()
+    if state.get("session_id") != session_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not found. Current: {state.get('session_id')}",
+        )
 
     collected = len(state["new_images"])
     return {
@@ -833,66 +672,32 @@ async def get_session_status(session_id: str):
 @app.post("/extract")
 async def extract_text(file: UploadFile = File(...)):
     """
-    Extract text using latest trained PaddleOCR model ONLY.
+    Test-only: run Gemini on image + show OpenCV preprocessing.
+    Does NOT save image or affect training session.
     """
-
-    suffix = Path(file.filename or "img.jpg").suffix.lower() or ".jpg"
+    suffix   = Path(file.filename or "img.jpg").suffix.lower() or ".jpg"
     tmp_path = DATA_DIR / f"_tmp_extract{suffix}"
-
     try:
-        # save temp image
         tmp_path.write_bytes(await file.read())
-
-        # preprocess image
+        text        = gemini_extract_text(tmp_path)
         proc_result = preprocess_and_save(tmp_path)
-
-        infer_image = proc_result.get("gray")
-
-        if not infer_image:
-            raise Exception("Preprocessing failed")
-
-        # load latest trained OCR model
-        ocr = load_latest_ocr_model()
-
-        if ocr is None:
-            raise Exception("No trained OCR model found")
-
-        # OCR inference
-        result = ocr.ocr(infer_image, det=False)
-
-        extracted_text = ""
-
-        try:
-            if result and result[0]:
-                extracted_text = result[0][0][0]
-        except Exception:
-            pass
-
-        extracted_text = extracted_text.strip()
-
-        return {
-            "filename": file.filename,
-            "model_used": OCR_MODEL_VERSION,
-            "extracted_text": extracted_text,
-            "char_count": len(extracted_text),
-            "preprocessing": proc_result,
-            "note": "Using trained PaddleOCR model only.",
-        }
-
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"OCR extraction failed: {e}"
-        )
-
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
     finally:
         tmp_path.unlink(missing_ok=True)
-
         for p in DATA_DIR.glob("_tmp_extract*"):
             p.unlink(missing_ok=True)
-
+        # Clean up temp processed files
         for p in PROCESSED_DIR.glob("_tmp_extract*"):
             p.unlink(missing_ok=True)
+
+    return {
+        "filename":       file.filename,
+        "extracted_text": text,
+        "char_count":     len(text),
+        "preprocessing":  proc_result,
+        "note":           "Dry-run only. Image not saved, session not affected.",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

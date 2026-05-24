@@ -1,0 +1,16 @@
+{
+  "session_id": "session_v4_20260524131937",
+  "status": "done",
+  "new_images": [
+    "session_v4_20260524131937_000.jpg"
+  ],
+  "sampled_old": [
+    "session_v2_20260524113342_000.jpg"
+  ],
+  "label_file": "/home/sanchit/paddleocr_server/data/labels/label_v4.txt",
+  "model_version": "v4",
+  "train_start": "2026-05-24T13:19:42.763225",
+  "train_end": "2026-05-24T13:20:41.331993",
+  "error": null,
+  "total_labels_written": 2
+}
