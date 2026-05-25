@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AIzaSyA6M5Rds7u_LYo92toLEaHybKQp0OnPDnA")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 BASE_DIR      = Path(__file__).parent
 DATA_DIR      = BASE_DIR / "data"
@@ -437,17 +437,43 @@ def get_old_images(exclude: list) -> list:
 def gemini_extract_text(image_path: Path) -> str:
     import PIL.Image
     img    = PIL.Image.open(image_path)
-    prompt = (
-        "You are an OCR labeling assistant for a PaddleOCR model trained on digital displays. "
-        "Extract the main value shown — numbers, units, symbols (e.g. 23.5°C, 1234, 56.7V). "
-        "IMPORTANT: Return ONLY a single line. No newlines, no markdown, no explanation."
-    )
+    prompt = """
+        Extract ALL visible text from this image exactly as written.
+
+        Requirements:
+        - Return EVERY readable word
+        - Include all lines
+        - Preserve symbols and numbers
+        - Preserve order from top to bottom
+        - NO markdown
+        - NO bullet points
+        - NO explanations
+        - NO labels
+        - NO formatting
+        - Return plain OCR text only
+
+        Example output:
+        EA DIP205G-4NLED
+        4x20 LED backlight
+        max. 150mA @ 4.2V
+        3.3V or 5V supply
+        """
     response = gemini_model.generate_content([prompt, img])
-    for line in response.text.strip().split("\n"):
-        line = line.strip()
-        if line:
-            return line
-    return response.text.strip()
+    # get raw response
+    text = response.text.strip()
+
+    # remove markdown bullets
+    text = text.replace("* ", "")
+    text = text.replace("- ", "")
+
+    # merge multiline OCR into single training line
+    text = " ".join(
+        line.strip()
+        for line in text.splitlines()
+        if line.strip()
+    )
+
+    return text
 
 
 def append_label(label_file: Path, image_name: str, text: str):
