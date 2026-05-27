@@ -1,28 +1,32 @@
 """
 PaddleOCR Incremental Training System with Gemini Auto-Labeling
-4 Endpoints:
-  POST /upload        - Upload image one by one (Gemini labels it automatically)
-  GET  /status        - Overall system status + history
-  GET  /status/{sid}  - Single session detail
-  POST /extract       - OCR using your trained model with detailed response
+Version 6.0.0
 
-Fixes in this version:
-  - drop_last=False  → prevents empty batch RecursionError
-  - MIN_ENTRIES pad  → duplicates tiny datasets to min 8 entries
-  - Image pre-validation → skips unreadable images before training
-  - simple_dataset patch → max 3 retries instead of 982
-  - Full Gemini text extraction (all lines preserved)
+5 Endpoints:
+  POST /upload            - Upload image one by one
+  GET  /status            - Full status with accuracy + total images trained
+  GET  /status/{sid}      - Single session detail
+  POST /extract           - OCR using your trained model
+  POST /stop              - Stop stuck training, reset to idle
+
+Changes in v6:
+  1. Invalid images → training STOPS cleanly (no more recursion loop)
+  2. /status shows total_images_trained, accuracy per version, model scores
+  3. Label file has exactly 1 entry per image (no duplicates)
+  4. POST /stop kills stuck training process and resets state
 """
 
 import os
+import re
 import sys
 import json
 import time
 import uuid
+import signal
 import random
 import shutil
 import asyncio
-import tempfile
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -52,7 +56,6 @@ PADDLEOCR_DIR = WORK_DIR / "PaddleOCR"
 NEW_IMAGES_PER_SESSION = 1    # change to 20 in production
 OLD_IMAGES_SAMPLE      = 1    # change to 5 in production
 TOTAL_BEFORE_TRAIN     = NEW_IMAGES_PER_SESSION + OLD_IMAGES_SAMPLE
-MIN_LABEL_ENTRIES      = 8    # pad dataset to this minimum to prevent RecursionError
 
 CONFIDENCE_THRESHOLD   = 60.0
 
@@ -63,9 +66,12 @@ for _d in [IMAGES_DIR, PROCESSED_DIR, LABELS_DIR,
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
-app = FastAPI(title="PaddleOCR Incremental Trainer", version="5.0.0")
+app = FastAPI(title="PaddleOCR Incremental Trainer", version="6.0.0")
 
 _ocr_cache = {"version": None, "predictor": None, "char_list": None}
+
+# Global training process handle — used by /stop endpoint
+_training_proc: Optional[asyncio.subprocess.Process] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,10 +79,7 @@ _ocr_cache = {"version": None, "predictor": None, "char_list": None}
 # ─────────────────────────────────────────────────────────────────────────────
 
 def preprocess_and_save(img_path: Path) -> dict:
-    """
-    Exact pipeline: grayscale -> 4x upscale -> bilateral -> CLAHE -> Otsu.
-    Saves _gray.png and _otsu.png to data/processed/.
-    """
+    """Grayscale → 4x upscale → bilateral → CLAHE → Otsu. Saves _gray + _otsu."""
     try:
         image = cv2.imread(str(img_path))
         if image is None:
@@ -98,7 +101,7 @@ def preprocess_and_save(img_path: Path) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CUSTOM INFERENCE ENGINE  (bypasses PaddleOCR 3.x API entirely)
+# CUSTOM INFERENCE ENGINE
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_char_list(dict_path: Path) -> list:
@@ -118,12 +121,10 @@ def _build_predictor(infer_dir: Path):
     pdmodel = infer_dir / "inference.pdmodel"
     json_m  = infer_dir / "inference.json"
     params  = infer_dir / "inference.pdiparams"
-    if pdmodel.exists():
-        model_file = str(pdmodel)
-    elif json_m.exists():
-        model_file = str(json_m)
-    else:
-        raise FileNotFoundError(f"No inference model found in {infer_dir}")
+    model_file = str(pdmodel) if pdmodel.exists() else (
+                 str(json_m)  if json_m.exists()  else None)
+    if not model_file:
+        raise FileNotFoundError(f"No inference model in {infer_dir}")
     if not params.exists():
         raise FileNotFoundError(f"inference.pdiparams not found in {infer_dir}")
     config = paddle_infer.Config(model_file, str(params))
@@ -144,8 +145,8 @@ def _preprocess_for_rec(img_bgr: np.ndarray,
 
 
 def _ctc_decode(preds: np.ndarray, char_list: list) -> tuple:
-    indices   = np.argmax(preds, axis=1)
-    scores    = np.max(preds, axis=1)
+    indices = np.argmax(preds, axis=1)
+    scores  = np.max(preds, axis=1)
     chars, confs, prev = [], [], 0
     for i, idx in enumerate(indices):
         if idx != 0 and idx != prev:
@@ -169,11 +170,11 @@ def _run_rec_on_image(img_bgr: np.ndarray, predictor, char_list: list) -> tuple:
 
 
 def find_latest_inference_dir() -> Optional[Path]:
-    version_dirs = sorted(
+    dirs = sorted(
         [p for p in MODELS_DIR.glob("v*/") if p.is_dir()],
         key=lambda p: int(p.name.replace("v","")) if p.name.replace("v","").isdigit() else 0
     )
-    for vdir in reversed(version_dirs):
+    for vdir in reversed(dirs):
         infer = vdir / "inference"
         if (infer / "inference.pdiparams").exists() and (
             (infer / "inference.pdmodel").exists() or
@@ -190,7 +191,6 @@ def get_ocr_predictor():
     version = infer_dir.parent.name
     if _ocr_cache["version"] == version and _ocr_cache["predictor"] is not None:
         return _ocr_cache["predictor"], _ocr_cache["char_list"], version
-    print(f"[OCR] Loading: {infer_dir}")
     predictor = _build_predictor(infer_dir)
     char_list = _load_char_list(DICT_FILE)
     _ocr_cache.update({"version": version, "predictor": predictor, "char_list": char_list})
@@ -217,10 +217,10 @@ def _detect_regions(image: np.ndarray) -> list:
         if area < 1000 or area > image_area * 0.9: continue
         if w < 80 or h < 40: continue
         pad = 20
-        x1 = max(0, x-pad);      y1 = max(0, y-pad)
+        x1 = max(0, x-pad);       y1 = max(0, y-pad)
         x2 = min(proc_w, x+w+pad); y2 = min(proc_h, y+h+pad)
-        ox1 = int(x1*scale_x);   oy1 = int(y1*scale_y)
-        ox2 = int(x2*scale_x);   oy2 = int(y2*scale_y)
+        ox1 = int(x1*scale_x); oy1 = int(y1*scale_y)
+        ox2 = int(x2*scale_x); oy2 = int(y2*scale_y)
         crop = image[oy1:oy2, ox1:ox2]
         if crop.size == 0: continue
         regions.append({"bbox": {"x": ox1, "y": oy1,
@@ -244,11 +244,12 @@ def _default_state() -> dict:
         "label_file": None, "model_version": None,
         "train_start": None, "train_end": None,
         "error": None, "total_labels_written": 0,
+        "accuracy": None, "loss": None,
     }
 
 
-def get_session_file(session_id: str) -> Path:
-    return SESSIONS_DIR / f"{session_id}.json"
+def get_session_file(sid: str) -> Path:
+    return SESSIONS_DIR / f"{sid}.json"
 
 
 def load_state(session_id: Optional[str] = None) -> dict:
@@ -258,9 +259,9 @@ def load_state(session_id: Optional[str] = None) -> dict:
             try: return json.loads(sf.read_text())
             except Exception: pass
         return _default_state()
-    session_files = sorted(SESSIONS_DIR.glob("*.json"), key=os.path.getmtime, reverse=True)
-    if not session_files: return _default_state()
-    try: return json.loads(session_files[0].read_text())
+    files = sorted(SESSIONS_DIR.glob("*.json"), key=os.path.getmtime, reverse=True)
+    if not files: return _default_state()
+    try: return json.loads(files[0].read_text())
     except Exception: return _default_state()
 
 
@@ -288,11 +289,11 @@ def next_version() -> str:
 
 
 def find_previous_checkpoint() -> Optional[Path]:
-    version_dirs = sorted(
+    dirs = sorted(
         [p for p in MODELS_DIR.glob("v*/") if p.is_dir()],
         key=lambda p: int(p.name.replace("v","")) if p.name.replace("v","").isdigit() else 0
     )
-    for vdir in reversed(version_dirs):
+    for vdir in reversed(dirs):
         best = vdir / "best_accuracy.pdparams"
         if best.exists():
             return vdir / "best_accuracy"
@@ -310,10 +311,6 @@ def get_old_images(exclude: list) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def gemini_extract_text(image_path: Path) -> str:
-    """
-    Extract ALL visible text from image — all lines preserved and merged
-    into one training label line (PaddleOCR rec model expects single-line labels).
-    """
     import PIL.Image
     img    = PIL.Image.open(image_path)
     prompt = """Extract ALL visible text from this image exactly as written.
@@ -327,29 +324,32 @@ Requirements:
 
 Example output:
 EA DIP205G-4NLED 4x20 LED backlight max. 150mA @ 4.2V 3.3V or 5V supply"""
-
-    response   = gemini_model.generate_content([prompt, img])
-    raw        = response.text.strip()
-
-    # Remove markdown bullets
-    raw = raw.replace("* ", "").replace("- ", "")
-
-    # Merge all lines into one training label
-    # PaddleOCR rec model expects single-line labels
-    merged = " ".join(
-        line.strip()
-        for line in raw.splitlines()
-        if line.strip()
-    )
-    return merged
+    response = gemini_model.generate_content([prompt, img])
+    raw      = response.text.strip()
+    raw      = raw.replace("* ", "").replace("- ", "")
+    return " ".join(line.strip() for line in raw.splitlines() if line.strip())
 
 
 def append_label(label_file: Path, image_name: str, text: str):
-    """Write single-line PaddleOCR label: /abs/path/img.jpg\ttext"""
+    """
+    Write one label line. Checks for duplicates — each image gets exactly ONE entry.
+    """
     abs_img    = str((IMAGES_DIR / image_name).resolve())
     clean_text = " ".join(
         part.strip() for part in text.replace("\r","\n").split("\n") if part.strip()
     ) or "unknown"
+
+    # Read existing entries and check for duplicate
+    existing_paths = set()
+    if label_file.exists():
+        for line in label_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if "\t" in line:
+                existing_paths.add(line.split("\t", 1)[0].strip())
+
+    if abs_img in existing_paths:
+        print(f"[Label] Skipping duplicate: {image_name}")
+        return  # already labeled — don't add again
+
     with open(label_file, "a", encoding="utf-8") as f:
         f.write(f"{abs_img}\t{clean_text}\n")
 
@@ -367,21 +367,30 @@ def find_label_in_history(image_name: str) -> Optional[str]:
     return None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LABEL VALIDATION — stops training on invalid images instead of looping
+# ─────────────────────────────────────────────────────────────────────────────
+
 def validate_and_fix_label_file(label_file: Path) -> dict:
     """Remove lines with no tab or missing image files."""
     if not label_file.exists():
         return {"good": 0, "removed": 0, "removed_lines": []}
     lines     = label_file.read_text(encoding="utf-8", errors="ignore").splitlines()
     good, bad = [], []
+    seen_paths = set()
     for line in lines:
         line = line.strip()
         if not line: continue
         if "\t" in line:
             pp, _ = line.split("\t", 1)
-            if os.path.exists(pp.strip()):
-                good.append(line)
-            else:
+            pp = pp.strip()
+            if not os.path.exists(pp):
                 bad.append(f"missing_image:{line[:80]}")
+            elif pp in seen_paths:
+                bad.append(f"duplicate:{pp}")  # deduplicate here too
+            else:
+                good.append(line)
+                seen_paths.add(pp)
         else:
             bad.append(f"no_tab:{line[:80]}")
     label_file.write_text("\n".join(good) + "\n" if good else "")
@@ -390,76 +399,71 @@ def validate_and_fix_label_file(label_file: Path) -> dict:
 
 def pre_validate_images(label_file: Path) -> dict:
     """
-    Read every image path in the label file and verify it is
-    actually loadable by OpenCV. Remove unreadable entries.
-    Prevents simple_dataset RecursionError on corrupt images.
+    Verify every image is readable by OpenCV BEFORE training.
+    Removes unreadable entries so training STOPS cleanly instead of
+    hitting the RecursionError loop in simple_dataset.py.
     """
     if not label_file.exists():
         return {"readable": 0, "skipped": 0, "skipped_paths": []}
-
-    lines    = label_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-    good     = []
-    skipped  = []
-
+    lines   = label_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+    good    = []
+    skipped = []
     for line in lines:
         line = line.strip()
-        if not line or "\t" not in line:
-            continue
+        if not line or "\t" not in line: continue
         path_part = line.split("\t", 1)[0].strip()
         img = cv2.imread(path_part)
         if img is None or img.size == 0:
             skipped.append(path_part)
-            print(f"[Validate] Skipping unreadable: {Path(path_part).name}")
+            print(f"[Validate] INVALID image removed: {Path(path_part).name}")
         else:
             good.append(line)
-
     if skipped:
         label_file.write_text("\n".join(good) + "\n" if good else "")
-        print(f"[Validate] Removed {len(skipped)} unreadable images")
-
+        print(f"[Validate] Removed {len(skipped)} invalid images — training will stop if 0 remain")
     return {"readable": len(good), "skipped": len(skipped), "skipped_paths": skipped}
 
 
-def pad_label_file(label_file: Path, min_entries: int = MIN_LABEL_ENTRIES) -> int:
+def prepare_training_label_file(label_file: Path) -> tuple:
     """
-    Duplicate entries until label file has at least min_entries.
-    Prevents PaddleOCR simple_dataset RecursionError on tiny datasets.
-    Returns final entry count.
+    Create a TEMP label file for PaddleOCR training.
+    The temp file has entries duplicated to MIN 8 (prevents RecursionError).
+    The original label file is NEVER modified — stays clean with 1 entry per image.
+    Returns (temp_label_path, entry_count, unique_images_count)
     """
-    lines = [l for l in label_file.read_text(
-        encoding="utf-8", errors="ignore").splitlines() if l.strip()]
+    if not label_file.exists():
+        raise ValueError("Label file does not exist")
 
-    if len(lines) >= min_entries:
-        return len(lines)
+    unique_lines = [l.strip() for l in
+                    label_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+                    if l.strip() and "\t" in l]
+    unique_count = len(unique_lines)
 
-    original = len(lines)
-    while len(lines) < min_entries:
-        lines.extend(lines)
-    lines = lines[:min_entries]
-    label_file.write_text("\n".join(lines) + "\n")
-    print(f"[Train] Padded label file: {original} -> {len(lines)} entries "
-          f"(min {min_entries} required)")
-    return len(lines)
+    if unique_count == 0:
+        raise ValueError("No valid entries in label file")
+
+    # Pad to minimum 8 entries in the temp file only
+    MIN_ENTRIES = 8
+    train_lines = list(unique_lines)
+    while len(train_lines) < MIN_ENTRIES:
+        train_lines.extend(unique_lines)
+    train_lines = train_lines[:max(MIN_ENTRIES, unique_count)]
+
+    tmp_label = label_file.parent / f"_train_tmp_{label_file.stem}.txt"
+    tmp_label.write_text("\n".join(train_lines) + "\n", encoding="utf-8")
+    print(f"[Train] Temp label: {unique_count} unique images → {len(train_lines)} entries for training")
+
+    return tmp_label, len(train_lines), unique_count
 
 
 def patch_simple_dataset():
-    """
-    Patch PaddleOCR's simple_dataset.py to stop retrying after 3 attempts
-    instead of recursing 982 times on bad images.
-    One-time patch, safe to call multiple times.
-    """
+    """Patch simple_dataset.py to max 3 retries instead of 982."""
     ds_path = PADDLEOCR_DIR / "ppocr" / "data" / "simple_dataset.py"
-    if not ds_path.exists():
-        return  # repo not cloned yet, will patch after clone
-
+    if not ds_path.exists(): return
     src = ds_path.read_text(encoding="utf-8")
-
-    # Already patched?
-    if "_retry_depth" in src:
-        return
-
+    if "_retry_depth" in src: return
     old = "            rnd_idx = random.randint(0, self.__len__() - 1)\n                return self.__getitem__(rnd_idx)"
-    new = ("            # Max 3 retries — prevents RecursionError on tiny/corrupt datasets\n"
+    new = ("            # Max 3 retries — prevents RecursionError\n"
            "            _depth = getattr(self, '_retry_depth', 0)\n"
            "            if _depth >= 3:\n"
            "                self._retry_depth = 0\n"
@@ -469,20 +473,106 @@ def patch_simple_dataset():
            "            result = self.__getitem__(rnd_idx)\n"
            "            self._retry_depth = 0\n"
            "            return result")
-
     if old in src:
         ds_path.write_text(src.replace(old, new), encoding="utf-8")
-        print("[Patch] simple_dataset.py patched — max 3 retries on bad images")
+        print("[Patch] simple_dataset.py patched")
     else:
-        print("[Patch] simple_dataset.py pattern not found — skipping patch "
-              "(may differ in this PaddleOCR version)")
+        print("[Patch] Pattern not found — different PaddleOCR version")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TRAINING  (v1 -> v2 -> v3 incremental chain)
+# ACCURACY PARSING — reads accuracy from training log
+# ─────────────────────────────────────────────────────────────────────────────
+
+def parse_training_metrics(log_file: Path) -> dict:
+    """
+    Parse train.log to extract final accuracy and loss.
+    Returns {"accuracy": float|None, "loss": float|None, "best_acc": float|None}
+    """
+    if not log_file.exists():
+        return {"accuracy": None, "loss": None, "best_acc": None}
+
+    text      = log_file.read_text(encoding="utf-8", errors="ignore")
+    accuracy  = None
+    loss      = None
+    best_acc  = None
+
+    # Parse last CTCLoss value
+    loss_matches = re.findall(r"CTCLoss:\s*([\d.]+)", text)
+    if loss_matches:
+        try: loss = round(float(loss_matches[-1]), 4)
+        except ValueError: pass
+
+    # Parse accuracy from eval lines
+    acc_matches = re.findall(r"acc:\s*([\d.]+)", text)
+    if acc_matches:
+        try:
+            vals    = [float(v) for v in acc_matches]
+            accuracy = round(vals[-1] * 100, 2) if vals[-1] <= 1.0 else round(vals[-1], 2)
+            best_acc = round(max(vals) * 100, 2) if max(vals) <= 1.0 else round(max(vals), 2)
+        except ValueError: pass
+
+    # Parse "best metric, acc: X" line
+    best_matches = re.findall(r"best metric,\s*acc:\s*([\d.]+)", text)
+    if best_matches:
+        try:
+            v = float(best_matches[-1])
+            best_acc = round(v * 100, 2) if v <= 1.0 else round(v, 2)
+        except ValueError: pass
+
+    return {"accuracy": accuracy, "loss": loss, "best_acc": best_acc}
+
+
+def get_all_model_scores() -> list:
+    """
+    Return accuracy/loss for all trained versions by reading their train.log.
+    """
+    scores = []
+    dirs   = sorted(
+        [p for p in MODELS_DIR.glob("v*/") if p.is_dir()],
+        key=lambda p: int(p.name.replace("v","")) if p.name.replace("v","").isdigit() else 0
+    )
+    for vdir in dirs:
+        log_file   = vdir / "train.log"
+        metrics    = parse_training_metrics(log_file)
+        has_model  = (vdir / "best_accuracy.pdparams").exists()
+        has_infer  = (vdir / "inference" / "inference.pdiparams").exists()
+        scores.append({
+            "version":       vdir.name,
+            "has_model":     has_model,
+            "has_inference": has_infer,
+            "accuracy_pct":  metrics["accuracy"],
+            "best_acc_pct":  metrics["best_acc"],
+            "final_loss":    metrics["loss"],
+        })
+    return scores
+
+
+def count_total_unique_trained_images() -> int:
+    """
+    Count unique image paths across ALL label files from successful sessions.
+    This is the true count of images the model has been trained on.
+    """
+    all_paths = set()
+    sessions  = load_all_sessions()
+    for s in sessions:
+        if s.get("status") != "done": continue
+        lf = s.get("label_file")
+        if not lf or not Path(lf).exists(): continue
+        for line in Path(lf).read_text(encoding="utf-8", errors="ignore").splitlines():
+            if "\t" in line:
+                pp = line.split("\t", 1)[0].strip()
+                if os.path.exists(pp):
+                    all_paths.add(pp)
+    return len(all_paths)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRAINING
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def run_training(state: dict):
+    global _training_proc
     version    = state["model_version"]
     label_file = Path(state["label_file"])
     output_dir = MODELS_DIR / version
@@ -492,30 +582,32 @@ async def run_training(state: dict):
     state["error"]       = None
     save_state(state)
 
+    tmp_label = None
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # ── Step 1: validate label file ───────────────────────────────────────
+        # Step 1: validate — remove bad/missing/duplicate entries
         fix = validate_and_fix_label_file(label_file)
-        print(f"[Train] Labels: {fix['good']} good, {fix['removed']} removed")
+        print(f"[Train] Validate: {fix['good']} good, {fix['removed']} removed")
         if fix["good"] == 0:
-            raise ValueError("0 valid label entries after cleanup.")
+            raise ValueError("0 valid label entries. Check images exist and labels are correct.")
 
-        # ── Step 2: pre-validate images are actually readable ─────────────────
+        # Step 2: pre-validate images are actually readable by OpenCV
+        # If image is invalid → remove it → training stops cleanly (no recursion)
         img_check = pre_validate_images(label_file)
-        print(f"[Train] Images: {img_check['readable']} readable, "
-              f"{img_check['skipped']} skipped")
+        print(f"[Train] Images: {img_check['readable']} readable, {img_check['skipped']} invalid removed")
         if img_check["readable"] == 0:
             raise ValueError(
-                f"All images in label file are unreadable. "
-                f"Skipped: {img_check['skipped_paths']}"
+                f"All {img_check['skipped']} images are unreadable/corrupt. "
+                "Upload valid images before training."
             )
 
-        # ── Step 3: pad to minimum entries ────────────────────────────────────
-        final_count = pad_label_file(label_file, MIN_LABEL_ENTRIES)
-        print(f"[Train] Final label entries for training: {final_count}")
+        # Step 3: create temp label file with padding (original stays clean — 1 per image)
+        tmp_label, train_count, unique_count = prepare_training_label_file(label_file)
+        state["total_labels_written"] = unique_count
+        save_state(state)
 
-        # ── Step 4: clone PaddleOCR if needed ────────────────────────────────
+        # Step 4: clone PaddleOCR if needed
         if not PADDLEOCR_DIR.exists():
             print("[Train] Cloning PaddleOCR...")
             r = await asyncio.create_subprocess_exec(
@@ -529,21 +621,20 @@ async def run_training(state: dict):
             if r.returncode != 0:
                 raise RuntimeError(f"Clone failed: {out.decode()}")
 
-        # ── Step 5: patch simple_dataset.py ──────────────────────────────────
+        # Step 5: patch simple_dataset (backup safety net)
         patch_simple_dataset()
 
-        # ── Step 6: find previous checkpoint ─────────────────────────────────
+        # Step 6: find previous checkpoint
         prev_ckpt       = find_previous_checkpoint()
-        pretrained_args = ([f"Global.pretrained_model={prev_ckpt}"]
-                           if prev_ckpt else [])
-        print(f"[Train] Prev checkpoint: {prev_ckpt or 'none (fresh start)'}")
+        pretrained_args = ([f"Global.pretrained_model={prev_ckpt}"] if prev_ckpt else [])
+        print(f"[Train] Prev checkpoint: {prev_ckpt or 'none'}")
 
-        label_abs  = str(label_file.resolve())
+        label_abs  = str(tmp_label.resolve())   # use temp label (padded)
         images_abs = str(IMAGES_DIR.resolve())
         output_abs = str(output_dir.resolve())
         dict_abs   = str(DICT_FILE.resolve())
 
-        # ── Step 7: run training ──────────────────────────────────────────────
+        # Step 7: run training
         train_cmd = [
             sys.executable, "tools/train.py",
             "-c", "configs/rec/PP-OCRv3/en_PP-OCRv3_mobile_rec.yml",
@@ -562,23 +653,29 @@ async def run_training(state: dict):
             "Global.log_smooth_window=1",
             "Train.loader.num_workers=0",
             "Train.loader.batch_size_per_card=1",
-            "Train.loader.drop_last=False",          # KEY FIX: no empty batch crash
+            "Train.loader.drop_last=False",
             "Eval.loader.num_workers=0",
             "Eval.loader.batch_size_per_card=1",
-            "Eval.loader.drop_last=False",            # KEY FIX
+            "Eval.loader.drop_last=False",
         ] + pretrained_args
 
-        print(f"[Train] Starting {version} — {final_count} label entries, 5 epochs")
-        proc = await asyncio.create_subprocess_exec(
+        print(f"[Train] Starting {version} — {unique_count} unique images, 3 epochs")
+        _training_proc = await asyncio.create_subprocess_exec(
             *train_cmd, cwd=str(PADDLEOCR_DIR),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        stdout, _ = await proc.communicate()
-        if proc.returncode != 0:
+        stdout, _ = await _training_proc.communicate()
+        rc        = _training_proc.returncode
+        _training_proc = None
+
+        if rc != 0 and rc != -15:  # -15 = SIGTERM (killed by /stop)
             raise RuntimeError(stdout.decode(errors="replace")[-3000:])
 
-        # ── Step 8: save best_accuracy.pdparams ──────────────────────────────
+        if rc == -15:
+            raise RuntimeError("Training was stopped manually via /stop endpoint.")
+
+        # Step 8: save best_accuracy.pdparams
         saved = sorted(output_dir.glob("*.pdparams"), key=os.path.getmtime)
         if not saved:
             raise FileNotFoundError(f"No .pdparams in {output_dir}")
@@ -587,13 +684,20 @@ async def run_training(state: dict):
             shutil.copy2(saved[-1], best)
             print(f"[Train] best_accuracy saved from {saved[-1].name}")
 
-        # Cleanup optimizer/epoch files
+        # Cleanup
         for f in output_dir.glob("*.pdparams"):
             if f.stem != "best_accuracy": f.unlink(missing_ok=True)
         for f in output_dir.glob("*.pdopt"):
             f.unlink(missing_ok=True)
 
-        # ── Step 9: export inference model ────────────────────────────────────
+        # Parse accuracy from log
+        log_file = output_dir / "train.log"
+        metrics  = parse_training_metrics(log_file)
+        state["accuracy"] = metrics.get("best_acc") or metrics.get("accuracy")
+        state["loss"]     = metrics.get("loss")
+        print(f"[Train] Accuracy: {state['accuracy']}%, Loss: {state['loss']}")
+
+        # Step 9: export inference model
         infer_dir = output_dir / "inference"
         infer_dir.mkdir(exist_ok=True)
         export_cmd = [
@@ -611,12 +715,12 @@ async def run_training(state: dict):
         )
         exp_out, _ = await exp.communicate()
         if exp.returncode != 0:
-            print(f"[Train] Export warning: {exp_out.decode(errors='replace')[-500:]}")
+            print(f"[Train] Export warning: {exp_out.decode(errors='replace')[-300:]}")
         else:
+            _ocr_cache["version"] = None  # reload predictor
             print(f"[Train] Inference exported: {infer_dir}")
-            _ocr_cache["version"] = None   # force predictor reload
 
-        # ── Step 10: keep only 2 latest version dirs ──────────────────────────
+        # Keep only 2 latest model dirs
         all_vdirs = sorted(
             [p for p in MODELS_DIR.glob("v*/") if p.is_dir()],
             key=lambda p: int(p.name.replace("v","")) if p.name.replace("v","").isdigit() else 0
@@ -635,6 +739,12 @@ async def run_training(state: dict):
         state["status"] = "error"
         state["error"]  = str(e)
         print(f"[Train] Error: {e}")
+
+    finally:
+        # Always clean up temp label file
+        if tmp_label and tmp_label.exists():
+            tmp_label.unlink(missing_ok=True)
+        _training_proc = None
 
     save_state(state)
 
@@ -661,8 +771,7 @@ async def prepare_and_train(state: dict):
             except Exception as e:
                 print(f"[Label] Gemini failed for {img_name}: {e}")
                 text = "unknown"
-        append_label(label_file, img_name, text)
-        state["total_labels_written"] += 1
+        append_label(label_file, img_name, text)  # duplicate-safe
 
     save_state(state)
     await run_training(state)
@@ -699,16 +808,11 @@ async def upload_image(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
 ):
-    """
-    Upload one image. Gemini extracts ALL text, OpenCV preprocesses it.
-    Training fires automatically after threshold is reached.
-    Blocks with 429 while training is running.
-    """
     state = load_state()
 
     if state["status"] == "training":
         raise HTTPException(status_code=429, detail={
-            "error":      "Training in progress. Wait until complete.",
+            "error":      "Training in progress. Wait or call POST /stop to cancel.",
             "status":     state["status"],
             "session_id": state["session_id"],
         })
@@ -716,7 +820,7 @@ async def upload_image(
     if (state["status"] == "collecting"
             and len(state["new_images"]) >= NEW_IMAGES_PER_SESSION):
         raise HTTPException(status_code=429, detail={
-            "error":  f"Already have {NEW_IMAGES_PER_SESSION} images. Training starting.",
+            "error":  f"Already have {NEW_IMAGES_PER_SESSION} images. Training starting soon.",
             "status": state["status"],
         })
 
@@ -749,7 +853,7 @@ async def upload_image(
 
     append_label(Path(state["label_file"]), img_name, text)
     state["new_images"].append(img_name)
-    state["total_labels_written"] += 1
+    state["total_labels_written"] = len(state["new_images"])
     save_state(state)
 
     collected = len(state["new_images"])
@@ -773,7 +877,7 @@ async def upload_image(
     if collected >= NEW_IMAGES_PER_SESSION:
         response["message"] = (
             f"Threshold reached! Sampling {OLD_IMAGES_SAMPLE} old images "
-            f"and starting training automatically."
+            "and starting training automatically."
         )
         background_tasks.add_task(prepare_and_train, state)
 
@@ -782,48 +886,75 @@ async def upload_image(
 
 @app.get("/status")
 async def get_status():
-    """Full system status + all sessions + incremental chain."""
-    sessions     = load_all_sessions()
-    trained      = sorted(
-        [p.parent.name for p in MODELS_DIR.glob("v*/best_accuracy.pdparams")],
-        key=lambda x: int(x.replace("v","")) if x.replace("v","").isdigit() else 0,
-    )
-    label_files  = sorted([p.name for p in LABELS_DIR.glob("label_v*.txt")])
-    total_images = len([p for p in IMAGES_DIR.glob("*")
-                        if p.suffix.lower() in {".jpg",".jpeg",".png",".bmp",".webp"}])
-    total_proc   = len(list(PROCESSED_DIR.glob("*_gray.png")))
-    prev_ckpt    = find_previous_checkpoint()
-    infer_ready  = find_latest_inference_dir()
+    """
+    Full status including:
+    - Total unique images trained across all sessions
+    - Accuracy and loss per model version
+    - Current session progress
+    - Incremental chain
+    """
+    sessions       = load_all_sessions()
+    model_scores   = get_all_model_scores()
+    total_trained  = count_total_unique_trained_images()
+    label_files    = sorted([p.name for p in LABELS_DIR.glob("label_v*.txt")])
+    total_on_disk  = len([p for p in IMAGES_DIR.glob("*")
+                          if p.suffix.lower() in {".jpg",".jpeg",".png",".bmp",".webp"}])
+    total_proc     = len(list(PROCESSED_DIR.glob("*_gray.png")))
+    prev_ckpt      = find_previous_checkpoint()
+    infer_ready    = find_latest_inference_dir()
+
+    trained_versions = [m["version"] for m in model_scores if m["has_model"]]
+
+    # Current session summary
+    current = load_state()
 
     return {
-        "total_sessions":    len(sessions),
-        "sessions":          sessions,
+        "summary": {
+            "total_images_trained":    total_trained,
+            "total_images_on_disk":    total_on_disk,
+            "total_processed_images":  total_proc,
+            "total_sessions":          len(sessions),
+            "trained_versions_count":  len(trained_versions),
+            "latest_inference_model":  infer_ready.parent.name if infer_ready else None,
+            "current_status":          current.get("status", "idle"),
+        },
+        "model_scores": model_scores,
+        "current_session": {
+            "session_id":           current.get("session_id"),
+            "status":               current.get("status", "idle"),
+            "model_version":        current.get("model_version"),
+            "new_images_count":     len(current.get("new_images", [])),
+            "sampled_old_count":    len(current.get("sampled_old", [])),
+            "total_labels_written": current.get("total_labels_written", 0),
+            "label_file":           current.get("label_file"),
+            "train_start":          current.get("train_start"),
+            "train_end":            current.get("train_end"),
+            "accuracy_pct":         current.get("accuracy"),
+            "final_loss":           current.get("loss"),
+            "error":                current.get("error"),
+        },
         "incremental_chain": {
-            "trained_versions":  trained,
-            "next_version":      f"v{len(trained)+1}",
-            "prev_checkpoint":   str(prev_ckpt)+".pdparams" if prev_ckpt else None,
-            "inference_ready":   str(infer_ready) if infer_ready else None,
-            "chain":             " -> ".join(trained + [f"v{len(trained)+1}(next)"]),
+            "trained_versions": trained_versions,
+            "next_version":     f"v{len(trained_versions)+1}",
+            "prev_checkpoint":  str(prev_ckpt)+".pdparams" if prev_ckpt else None,
+            "chain":            " -> ".join(trained_versions + [f"v{len(trained_versions)+1}(next)"]),
         },
         "storage": {
-            "total_images":     total_images,
-            "processed_images": total_proc,
-            "label_files":      label_files,
-            "models_dir":       str(MODELS_DIR),
-            "processed_dir":    str(PROCESSED_DIR),
+            "label_files":   label_files,
+            "models_dir":    str(MODELS_DIR),
+            "processed_dir": str(PROCESSED_DIR),
         },
         "thresholds": {
             "new_images_per_session": NEW_IMAGES_PER_SESSION,
             "old_images_sampled":     OLD_IMAGES_SAMPLE,
             "total_before_training":  TOTAL_BEFORE_TRAIN,
-            "min_label_entries":      MIN_LABEL_ENTRIES,
         },
+        "sessions": sessions,
     }
 
 
 @app.get("/status/{session_id}")
 async def get_session_status(session_id: str):
-    """Detailed status for one session."""
     state     = load_state(session_id)
     collected = len(state["new_images"])
     return {
@@ -838,6 +969,8 @@ async def get_session_status(session_id: str):
         "total_labels_written": state["total_labels_written"],
         "train_start":          state["train_start"],
         "train_end":            state["train_end"],
+        "accuracy_pct":         state.get("accuracy"),
+        "final_loss":           state.get("loss"),
         "error":                state["error"],
         "progress": {
             "phase": (
@@ -853,16 +986,73 @@ async def get_session_status(session_id: str):
     }
 
 
+@app.post("/stop")
+async def stop_training():
+    """
+    Stop any running training process and reset state to idle.
+    Use this when training is stuck — then upload new images to start fresh.
+    """
+    global _training_proc
+
+    stopped_pid = None
+
+    # Kill the asyncio subprocess if we have a handle
+    if _training_proc is not None:
+        try:
+            _training_proc.terminate()
+            stopped_pid = _training_proc.pid
+            print(f"[Stop] Sent SIGTERM to training process PID {stopped_pid}")
+            await asyncio.sleep(2)
+            try:
+                _training_proc.kill()  # force kill if still running
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[Stop] Error terminating process: {e}")
+        _training_proc = None
+
+    # Also kill any orphaned train.py processes
+    try:
+        result = subprocess.run(
+            ["pkill", "-u", os.environ.get("USER", ""), "-f", "train.py"],
+            capture_output=True
+        )
+        print(f"[Stop] pkill train.py: {result.returncode}")
+    except Exception as e:
+        print(f"[Stop] pkill failed: {e}")
+
+    # Reset stuck sessions
+    reset_count = 0
+    for sf in SESSIONS_DIR.glob("*.json"):
+        try:
+            s = json.loads(sf.read_text())
+            if s.get("status") in ("training", "collecting"):
+                s["status"]    = "error"
+                s["error"]     = "Stopped manually via POST /stop"
+                s["train_end"] = datetime.utcnow().isoformat()
+                sf.write_text(json.dumps(s, indent=2))
+                reset_count += 1
+                print(f"[Stop] Reset session: {s['session_id']}")
+        except Exception:
+            continue
+
+    # Clean up temp label files
+    for tmp in LABELS_DIR.glob("_train_tmp_*.txt"):
+        tmp.unlink(missing_ok=True)
+
+    return {
+        "message":       "Training stopped. System reset to idle. You can now upload new images.",
+        "stopped_pid":   stopped_pid,
+        "sessions_reset": reset_count,
+        "next_action":   "POST /upload to start a new training session",
+    }
+
+
 @app.post("/extract")
 async def extract(
     file: UploadFile = File(...),
     tablet_id: str = "default",
 ):
-    """
-    OCR using YOUR trained model via paddle.inference predictor.
-    No PaddleOCR 3.x API — no model name mismatch errors.
-    Returns readings with confidence, bbox, and low-confidence warnings.
-    """
     t_start    = time.time()
     request_id = str(uuid.uuid4())
 
@@ -872,7 +1062,7 @@ async def extract(
     if predictor is None:
         raise HTTPException(status_code=503, detail=(
             "No trained model available yet. "
-            "Upload images to trigger training first, then use /extract."
+            "Upload images to trigger training first."
         ))
 
     suffix   = Path(file.filename or "img.jpg").suffix.lower() or ".jpg"
@@ -894,8 +1084,7 @@ async def extract(
             if len(crop.shape) == 2:
                 crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
             text, confidence = _run_rec_on_image(crop, predictor, char_list)
-            if not text:
-                continue
+            if not text: continue
             raw_texts.append(text)
             entry = {"value": text, "unit": "", "confidence": confidence, "bbox": bbox}
             if confidence >= CONFIDENCE_THRESHOLD:
