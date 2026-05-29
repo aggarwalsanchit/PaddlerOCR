@@ -1,6 +1,6 @@
 """
 PaddleOCR Incremental Training System with Gemini Auto-Labeling
-Version 6.0.0
+Version 7.0.0
 
 5 Endpoints:
   POST /upload            - Upload image one by one
@@ -9,11 +9,12 @@ Version 6.0.0
   POST /extract           - OCR using your trained model
   POST /stop              - Stop stuck training, reset to idle
 
-Changes in v6:
-  1. Invalid images → training STOPS cleanly (no more recursion loop)
-  2. /status shows total_images_trained, accuracy per version, model scores
-  3. Label file has exactly 1 entry per image (no duplicates)
-  4. POST /stop kills stuck training process and resets state
+Changes in v7:
+  1. TRAINING TIMEOUT — auto-kills training if it exceeds TRAIN_TIMEOUT_SECONDS (default 600s)
+  2. LIVE LOG STREAMING — training stdout is captured line-by-line into session state
+  3. /status and /status/{sid} now return last 50 training log lines so you can see exactly where it's stuck
+  4. training_phase field tracks which step (cloning/labeling/training/export) is active
+  5. All v6 fixes retained (no recursion, 1 label per image, /stop endpoint)
 """
 
 import os
@@ -58,6 +59,7 @@ OLD_IMAGES_SAMPLE      = 1    # change to 5 in production
 TOTAL_BEFORE_TRAIN     = NEW_IMAGES_PER_SESSION + OLD_IMAGES_SAMPLE
 
 CONFIDENCE_THRESHOLD   = 60.0
+TRAIN_TIMEOUT_SECONDS  = 1800  # 30 min — enough for 50 epochs on CPU with a small dataset
 
 for _d in [IMAGES_DIR, PROCESSED_DIR, LABELS_DIR,
            MODELS_DIR, DICT_FILE.parent, WORK_DIR, SESSIONS_DIR]:
@@ -66,7 +68,7 @@ for _d in [IMAGES_DIR, PROCESSED_DIR, LABELS_DIR,
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel("gemini-2.5-flash-lite")
 
-app = FastAPI(title="PaddleOCR Incremental Trainer", version="6.0.0")
+app = FastAPI(title="PaddleOCR Incremental Trainer", version="7.0.0")
 
 _ocr_cache = {"version": None, "predictor": None, "char_list": None}
 
@@ -245,6 +247,8 @@ def _default_state() -> dict:
         "train_start": None, "train_end": None,
         "error": None, "total_labels_written": 0,
         "accuracy": None, "loss": None,
+        "training_phase": None,        # current step: cloning/labeling/training/export
+        "training_log": [],            # last 50 lines of training stdout (live)
     }
 
 
@@ -303,7 +307,9 @@ def find_previous_checkpoint() -> Optional[Path]:
 def get_old_images(exclude: list) -> list:
     exts = {".png",".jpg",".jpeg",".webp",".bmp"}
     return [p.name for p in IMAGES_DIR.glob("*")
-            if p.suffix.lower() in exts and p.name not in exclude]
+            if p.suffix.lower() in exts
+            and p.name not in exclude
+            and "_crop" not in p.stem]  # skip auto-generated region crops
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -311,24 +317,102 @@ def get_old_images(exclude: list) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def gemini_extract_text(image_path: Path) -> str:
+    """
+    Single Gemini call — returns ALL text regions as a JSON array.
+    Each element is a short string for one display region/line.
+    Falls back to a plain string if JSON parsing fails.
+    """
     import PIL.Image
-    img    = PIL.Image.open(image_path)
-    prompt = """Extract ALL visible text from this image exactly as written.
-
-Requirements:
-- Return EVERY readable word, number, symbol
-- Include all lines from top to bottom
-- Preserve numbers, units, symbols exactly
-- NO markdown, NO bullet points, NO explanations
-- Return plain text only
-
-Example output:
-EA DIP205G-4NLED 4x20 LED backlight max. 150mA @ 4.2V 3.3V or 5V supply"""
+    img = PIL.Image.open(image_path)
+    prompt = (
+        "This image shows a digital display, meter, or instrument panel. "
+        "Extract every distinct text region (each number, value, or label). "
+        "Return ONLY a JSON array of strings, one string per region, "
+        "in reading order top-to-bottom left-to-right. "
+        "Each string should contain only the exact characters visible "
+        "(digits, decimal points, units like V, A, W, kWh, %, degC). "
+        "No markdown, no code fences, no explanations. "
+        "Example: [\"238.2V\", \"230.5V\", \"0.0V\", \"57.4kWh\"]"
+    )
     response = gemini_model.generate_content([prompt, img])
-    raw      = response.text.strip()
-    raw      = raw.replace("* ", "").replace("- ", "")
-    return " ".join(line.strip() for line in raw.splitlines() if line.strip())
+    raw = response.text.strip().replace("```json", "").replace("```", "").strip()
+    try:
+        items = json.loads(raw)
+        if isinstance(items, list):
+            # Clean each item
+            return json.dumps([" ".join(str(t).split()) for t in items if str(t).strip()])
+    except Exception:
+        pass
+    # Fallback: treat as plain text, return as single-element JSON array
+    plain = " ".join(line.strip() for line in raw.splitlines() if line.strip())
+    return json.dumps([plain]) if plain else json.dumps(["unknown"])
 
+
+def label_image_by_regions(
+    img_path: Path,
+    label_file: Path,
+    base_name: str,
+) -> dict:
+    """
+    ONE Gemini call per image returns a JSON array of text regions.
+    Each region is saved as a crop image + one label entry.
+    Returns: {"crops": [...], "whole_text": str, "labels_written": int}
+    """
+    image_bgr = cv2.imread(str(img_path))
+    if image_bgr is None:
+        return {"crops": [], "whole_text": "", "labels_written": 0, "error": "unreadable"}
+
+    # ONE Gemini call → JSON list of region texts
+    raw_json = gemini_extract_text(img_path)
+    try:
+        region_texts = json.loads(raw_json)
+        if not isinstance(region_texts, list):
+            region_texts = [str(region_texts)]
+    except Exception:
+        region_texts = [raw_json]
+
+    region_texts = [t.strip() for t in region_texts if str(t).strip()]
+    if not region_texts:
+        region_texts = ["unknown"]
+
+    # Detect image regions with OpenCV
+    regions = _detect_regions(image_bgr)
+
+    crops_info     = []
+    labels_written = 0
+    whole_text     = " ".join(region_texts)
+
+    if regions:
+        # Pair each detected region with a Gemini text (by index, cycle if needed)
+        for i, region in enumerate(regions):
+            crop = region["crop"]
+            if len(crop.shape) == 2:
+                crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+
+            crop_name = f"{base_name}_crop{i:02d}.png"
+            crop_path = IMAGES_DIR / crop_name
+            cv2.imwrite(str(crop_path), crop)
+
+            # Use Gemini text at same index; cycle if fewer texts than regions
+            text = region_texts[i % len(region_texts)]
+
+            append_label(label_file, crop_name, text)
+            labels_written += 1
+            crops_info.append({"crop_name": crop_name, "text": text})
+            print(f"[Label] {crop_name} → '{text}'")
+    else:
+        # No regions detected — label whole image with first text
+        text = region_texts[0]
+        append_label(label_file, img_path.name, text)
+        labels_written = 1
+        crops_info = [{"crop_name": img_path.name, "text": text}]
+        print(f"[Label] No crops, whole image → '{text}'")
+
+    return {
+        "crops":          crops_info,
+        "whole_text":     whole_text,
+        "labels_written": labels_written,
+    }
 
 def append_label(label_file: Path, image_name: str, text: str):
     """
@@ -457,27 +541,76 @@ def prepare_training_label_file(label_file: Path) -> tuple:
 
 
 def patch_simple_dataset():
-    """Patch simple_dataset.py to max 3 retries instead of 982."""
-    ds_path = PADDLEOCR_DIR / "ppocr" / "data" / "simple_dataset.py"
-    if not ds_path.exists(): return
-    src = ds_path.read_text(encoding="utf-8")
-    if "_retry_depth" in src: return
-    old = "            rnd_idx = random.randint(0, self.__len__() - 1)\n                return self.__getitem__(rnd_idx)"
-    new = ("            # Max 3 retries — prevents RecursionError\n"
-           "            _depth = getattr(self, '_retry_depth', 0)\n"
-           "            if _depth >= 3:\n"
-           "                self._retry_depth = 0\n"
-           "                return None\n"
-           "            self._retry_depth = _depth + 1\n"
-           "            rnd_idx = random.randint(0, self.__len__() - 1)\n"
-           "            result = self.__getitem__(rnd_idx)\n"
-           "            self._retry_depth = 0\n"
-           "            return result")
-    if old in src:
-        ds_path.write_text(src.replace(old, new), encoding="utf-8")
-        print("[Patch] simple_dataset.py patched")
-    else:
-        print("[Patch] Pattern not found — different PaddleOCR version")
+    """
+    Fix the RecursionError WITHOUT touching simple_dataset.py.
+
+    We write a tiny wrapper script (patch_guard.py) that is prepended to
+    sys.path via PYTHONPATH when train.py runs.  Python imports OUR file
+    first, which imports the real simple_dataset, then monkey-patches
+    SimpleDataSet.__getitem__ at runtime — no file edits, no breakage.
+    """
+    guard_path = PADDLEOCR_DIR / "patch_guard"
+    guard_path.mkdir(exist_ok=True)
+
+    # This file lives at patch_guard/ppocr/data/simple_dataset.py
+    # Python will import it INSTEAD of the real one, then we re-export
+    # everything so the rest of PaddleOCR still works.
+    pkg_dir = guard_path / "ppocr" / "data"
+    pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write __init__.py files so it's a proper package
+    (guard_path / "ppocr" / "__init__.py").write_text("", encoding="utf-8")
+    (pkg_dir / "__init__.py").write_text("", encoding="utf-8")
+
+    shim = guard_path / "ppocr" / "data" / "simple_dataset.py"
+    shim.write_text(
+        "# AUTO-GENERATED by main.py patch_simple_dataset() — DO NOT EDIT\n"
+        "# Imports the real simple_dataset then patches __getitem__ to stop RecursionError\n"
+        "import sys as _sys, os as _os, importlib as _importlib\n"
+        "\n"
+        "# Remove ourselves from sys.path so the real module loads next\n"
+        "_guard_dir = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))\n"
+        "if _guard_dir in _sys.path:\n"
+        "    _sys.path.remove(_guard_dir)\n"
+        "\n"
+        "# Force-reload the real simple_dataset from PaddleOCR\n"
+        "_key = 'ppocr.data.simple_dataset'\n"
+        "if _key in _sys.modules:\n"
+        "    del _sys.modules[_key]\n"
+        "_real = _importlib.import_module('ppocr.data.simple_dataset')\n"
+        "\n"
+        "# Re-export EVERYTHING from the real module\n"
+        "from ppocr.data.simple_dataset import *  # noqa\n"
+        "try:\n"
+        "    from ppocr.data.simple_dataset import SimpleDataSet, MultiScaleDataSet\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "\n"
+        "# Monkey-patch __getitem__ with a recursion depth guard\n"
+        "import functools as _ft\n"
+        "def _safe_getitem(orig):\n"
+        "    @_ft.wraps(orig)\n"
+        "    def _wrapper(self, idx):\n"
+        "        depth = getattr(self, '_pg_depth', 0)\n"
+        "        if depth >= 3:\n"
+        "            self._pg_depth = 0\n"
+        "            return None\n"
+        "        self._pg_depth = depth + 1\n"
+        "        try:\n"
+        "            return orig(self, idx)\n"
+        "        finally:\n"
+        "            self._pg_depth = max(0, getattr(self, '_pg_depth', 1) - 1)\n"
+        "    return _wrapper\n"
+        "\n"
+        "try:\n"
+        "    SimpleDataSet.__getitem__ = _safe_getitem(SimpleDataSet.__getitem__)\n"
+        "    print('[PatchGuard] SimpleDataSet.__getitem__ protected against RecursionError')\n"
+        "except Exception as _e:\n"
+        "    print(f'[PatchGuard] Warning: {_e}')\n",
+        encoding="utf-8"
+    )
+    print(f"[Patch] Guard shim written to {shim}")
+    return str(guard_path)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -577,25 +710,39 @@ async def run_training(state: dict):
     label_file = Path(state["label_file"])
     output_dir = MODELS_DIR / version
 
-    state["status"]      = "training"
-    state["train_start"] = datetime.utcnow().isoformat()
-    state["error"]       = None
+    state["status"]        = "training"
+    state["train_start"]   = datetime.utcnow().isoformat()
+    state["error"]         = None
+    state["training_log"]  = []
+    state["training_phase"] = "initializing"
     save_state(state)
+
+    def _log(line: str, phase: str = None):
+        """Append a line to the rolling in-session log (max 50 lines) and print it."""
+        print(line)
+        state["training_log"].append(line)
+        if len(state["training_log"]) > 50:
+            state["training_log"] = state["training_log"][-50:]
+        if phase:
+            state["training_phase"] = phase
 
     tmp_label = None
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Step 1: validate — remove bad/missing/duplicate entries
+        _log("[Train] Step 1/7 — Validating label file...", phase="validating_labels")
         fix = validate_and_fix_label_file(label_file)
-        print(f"[Train] Validate: {fix['good']} good, {fix['removed']} removed")
+        _log(f"[Train] Validate: {fix['good']} good, {fix['removed']} removed")
+        save_state(state)
         if fix["good"] == 0:
             raise ValueError("0 valid label entries. Check images exist and labels are correct.")
 
         # Step 2: pre-validate images are actually readable by OpenCV
-        # If image is invalid → remove it → training stops cleanly (no recursion)
+        _log("[Train] Step 2/7 — Pre-validating image readability...", phase="validating_images")
         img_check = pre_validate_images(label_file)
-        print(f"[Train] Images: {img_check['readable']} readable, {img_check['skipped']} invalid removed")
+        _log(f"[Train] Images: {img_check['readable']} readable, {img_check['skipped']} invalid removed")
+        save_state(state)
         if img_check["readable"] == 0:
             raise ValueError(
                 f"All {img_check['skipped']} images are unreadable/corrupt. "
@@ -603,13 +750,16 @@ async def run_training(state: dict):
             )
 
         # Step 3: create temp label file with padding (original stays clean — 1 per image)
+        _log("[Train] Step 3/7 — Preparing temp label file...", phase="preparing_labels")
         tmp_label, train_count, unique_count = prepare_training_label_file(label_file)
         state["total_labels_written"] = unique_count
+        _log(f"[Train] Temp label: {unique_count} unique → {train_count} entries (padded to min 8)")
         save_state(state)
 
         # Step 4: clone PaddleOCR if needed
         if not PADDLEOCR_DIR.exists():
-            print("[Train] Cloning PaddleOCR...")
+            _log("[Train] Step 4/7 — Cloning PaddleOCR repo (first time only)...", phase="cloning_paddleocr")
+            save_state(state)
             r = await asyncio.create_subprocess_exec(
                 "git", "clone", "--depth", "1",
                 "https://github.com/PaddlePaddle/PaddleOCR.git",
@@ -620,21 +770,44 @@ async def run_training(state: dict):
             out, _ = await r.communicate()
             if r.returncode != 0:
                 raise RuntimeError(f"Clone failed: {out.decode()}")
+            _log("[Train] PaddleOCR cloned successfully.")
+        else:
+            _log("[Train] Step 4/7 — PaddleOCR already present, skipping clone.")
 
-        # Step 5: patch simple_dataset (backup safety net)
-        patch_simple_dataset()
+        # Step 5: prepare recursion guard shim and restore simple_dataset if corrupted
+        _log("[Train] Step 5/7 — Setting up recursion guard (PYTHONPATH shim)...", phase="patching")
+
+        # Restore simple_dataset.py if a previous bad patch corrupted it
+        ds_path = PADDLEOCR_DIR / "ppocr" / "data" / "simple_dataset.py"
+        if ds_path.exists():
+            ds_src = ds_path.read_text(encoding="utf-8")
+            if "PATCHED_V7_RECURSION_GUARD" in ds_src or "AUTO-GENERATED by main.py" in ds_src:
+                _log("[Patch] Detected corrupted/patched simple_dataset.py — restoring via git...")
+                restore = await asyncio.create_subprocess_exec(
+                    "git", "checkout", "ppocr/data/simple_dataset.py",
+                    cwd=str(PADDLEOCR_DIR),
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                )
+                r_out, _ = await restore.communicate()
+                if restore.returncode == 0:
+                    _log("[Patch] simple_dataset.py restored to original.")
+                else:
+                    _log(f"[Patch] git restore warning: {r_out.decode(errors='replace')[:200]}")
+
+        guard_dir = patch_simple_dataset()
+        save_state(state)
 
         # Step 6: find previous checkpoint
         prev_ckpt       = find_previous_checkpoint()
         pretrained_args = ([f"Global.pretrained_model={prev_ckpt}"] if prev_ckpt else [])
-        print(f"[Train] Prev checkpoint: {prev_ckpt or 'none'}")
+        _log(f"[Train] Step 6/7 — Checkpoint: {prev_ckpt or 'none (fresh start)'}")
 
         label_abs  = str(tmp_label.resolve())   # use temp label (padded)
         images_abs = str(IMAGES_DIR.resolve())
         output_abs = str(output_dir.resolve())
         dict_abs   = str(DICT_FILE.resolve())
 
-        # Step 7: run training
+        # Step 7: run training with TIMEOUT
         train_cmd = [
             sys.executable, "tools/train.py",
             "-c", "configs/rec/PP-OCRv3/en_PP-OCRv3_mobile_rec.yml",
@@ -646,10 +819,10 @@ async def run_training(state: dict):
             f"Global.save_model_dir={output_abs}",
             f"Global.character_dict_path={dict_abs}",
             "Global.use_gpu=False",
-            "Global.epoch_num=3",
-            "Global.save_epoch_step=1",
-            "Global.eval_batch_step=[0,99999]",
-            "Global.cal_metric_during_train=False",
+            "Global.epoch_num=50",            # enough epochs for tiny datasets
+            "Global.save_epoch_step=10",
+            "Global.eval_batch_step=[0,8]",   # evaluate every 8 iters (~1 epoch with 8 padded samples)
+            "Global.cal_metric_during_train=True",
             "Global.log_smooth_window=1",
             "Train.loader.num_workers=0",
             "Train.loader.batch_size_per_card=1",
@@ -659,30 +832,89 @@ async def run_training(state: dict):
             "Eval.loader.drop_last=False",
         ] + pretrained_args
 
-        print(f"[Train] Starting {version} — {unique_count} unique images, 3 epochs")
+        _log(f"[Train] Step 7/7 — Launching PaddleOCR train.py "
+             f"({unique_count} images, 3 epochs, timeout={TRAIN_TIMEOUT_SECONDS}s)...",
+             phase="training")
+        save_state(state)
+
+        # Inject guard_dir at front of PYTHONPATH so our shim loads first
+        train_env = os.environ.copy()
+        existing_pypath = train_env.get("PYTHONPATH", "")
+        train_env["PYTHONPATH"] = (
+            guard_dir + os.pathsep + existing_pypath
+            if existing_pypath else guard_dir
+        )
+        _log(f"[Train] PYTHONPATH guard: {guard_dir}")
+
         _training_proc = await asyncio.create_subprocess_exec(
             *train_cmd, cwd=str(PADDLEOCR_DIR),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=train_env,
         )
-        stdout, _ = await _training_proc.communicate()
-        rc        = _training_proc.returncode
-        _training_proc = None
 
-        if rc != 0 and rc != -15:  # -15 = SIGTERM (killed by /stop)
-            raise RuntimeError(stdout.decode(errors="replace")[-3000:])
+        # ── Stream stdout line-by-line with a per-read timeout ──────────────
+        train_start_ts = time.time()
+        rc = None
+        try:
+            while True:
+                elapsed = time.time() - train_start_ts
+                remaining = TRAIN_TIMEOUT_SECONDS - elapsed
+                if remaining <= 0:
+                    _log(f"[Train] TIMEOUT — exceeded {TRAIN_TIMEOUT_SECONDS}s. Killing process.")
+                    try:
+                        _training_proc.terminate()
+                        await asyncio.sleep(2)
+                        _training_proc.kill()
+                    except Exception:
+                        pass
+                    raise RuntimeError(
+                        f"Training timed out after {TRAIN_TIMEOUT_SECONDS}s. "
+                        "Increase TRAIN_TIMEOUT_SECONDS or reduce epoch_num."
+                    )
+                try:
+                    line_bytes = await asyncio.wait_for(
+                        _training_proc.stdout.readline(),
+                        timeout=min(30.0, remaining)   # re-check timeout every 30s at most
+                    )
+                except asyncio.TimeoutError:
+                    # No output for 30s — log a heartbeat so /status shows it's alive
+                    elapsed = int(time.time() - train_start_ts)
+                    _log(f"[Train] ... still running ({elapsed}s elapsed, no output in last 30s)")
+                    save_state(state)
+                    await asyncio.sleep(0)
+                    continue
+
+                if not line_bytes:
+                    # EOF — process finished
+                    break
+                line = line_bytes.decode(errors="replace").rstrip()
+                _log(line)
+                # Save state after every line so /status always has fresh data
+                save_state(state)
+                # Yield event loop so FastAPI can serve /status requests mid-training
+                await asyncio.sleep(0)
+
+            rc = await _training_proc.wait()
+        finally:
+            _training_proc = None
+
+        if rc is not None and rc != 0 and rc != -15:
+            recent = "\n".join(state["training_log"][-20:])
+            raise RuntimeError(f"train.py exited with code {rc}. Last output:\n{recent}")
 
         if rc == -15:
             raise RuntimeError("Training was stopped manually via /stop endpoint.")
 
         # Step 8: save best_accuracy.pdparams
+        _log("[Train] Saving best checkpoint...", phase="saving_checkpoint")
         saved = sorted(output_dir.glob("*.pdparams"), key=os.path.getmtime)
         if not saved:
             raise FileNotFoundError(f"No .pdparams in {output_dir}")
         best = output_dir / "best_accuracy.pdparams"
         if not best.exists():
             shutil.copy2(saved[-1], best)
-            print(f"[Train] best_accuracy saved from {saved[-1].name}")
+            _log(f"[Train] best_accuracy saved from {saved[-1].name}")
 
         # Cleanup
         for f in output_dir.glob("*.pdparams"):
@@ -695,9 +927,11 @@ async def run_training(state: dict):
         metrics  = parse_training_metrics(log_file)
         state["accuracy"] = metrics.get("best_acc") or metrics.get("accuracy")
         state["loss"]     = metrics.get("loss")
-        print(f"[Train] Accuracy: {state['accuracy']}%, Loss: {state['loss']}")
+        _log(f"[Train] Accuracy: {state['accuracy']}%  Loss: {state['loss']}")
 
         # Step 9: export inference model
+        _log("[Train] Exporting inference model...", phase="exporting")
+        save_state(state)
         infer_dir = output_dir / "inference"
         infer_dir.mkdir(exist_ok=True)
         export_cmd = [
@@ -715,10 +949,10 @@ async def run_training(state: dict):
         )
         exp_out, _ = await exp.communicate()
         if exp.returncode != 0:
-            print(f"[Train] Export warning: {exp_out.decode(errors='replace')[-300:]}")
+            _log(f"[Train] Export warning: {exp_out.decode(errors='replace')[-300:]}")
         else:
             _ocr_cache["version"] = None  # reload predictor
-            print(f"[Train] Inference exported: {infer_dir}")
+            _log(f"[Train] Inference exported: {infer_dir}")
 
         # Keep only 2 latest model dirs
         all_vdirs = sorted(
@@ -727,18 +961,20 @@ async def run_training(state: dict):
         )
         for old in all_vdirs[:-2]:
             shutil.rmtree(old, ignore_errors=True)
-            print(f"[Cleanup] Deleted: {old.name}")
+            _log(f"[Cleanup] Deleted old model dir: {old.name}")
 
         (MODELS_DIR / f"{version}.pd").touch()
-        state["status"]    = "done"
-        state["train_end"] = datetime.utcnow().isoformat()
-        state["error"]     = None
-        print(f"[Train] Complete: {version}")
+        state["status"]         = "done"
+        state["train_end"]      = datetime.utcnow().isoformat()
+        state["error"]          = None
+        state["training_phase"] = "complete"
+        _log(f"[Train] ✓ Complete: {version}")
 
     except Exception as e:
-        state["status"] = "error"
-        state["error"]  = str(e)
-        print(f"[Train] Error: {e}")
+        state["status"]         = "error"
+        state["error"]          = str(e)
+        state["training_phase"] = "failed"
+        _log(f"[Train] ERROR: {e}")
 
     finally:
         # Always clean up temp label file
@@ -764,14 +1000,38 @@ async def prepare_and_train(state: dict):
             res = preprocess_and_save(img_path)
             print(f"[Preprocess] {'OK' if 'error' not in res else 'FAIL'}: {img_name}")
 
-        text = find_label_in_history(img_name)
-        if not text:
+        # Check if this old image already has region-crop labels in history
+        # (crop filenames follow the pattern stem_crop00.png, stem_crop01.png …)
+        crop_pattern = f"{img_path.stem}_crop"
+        already_labeled = any(
+            crop_pattern in line
+            for lf in sorted(LABELS_DIR.glob("label_v*.txt"))
+            for line in (lf.read_text(encoding="utf-8", errors="ignore").splitlines()
+                         if lf.exists() else [])
+            if "	" in line
+        )
+
+        if already_labeled:
+            # Re-use existing crop labels by appending them to this label file
+            for lf in sorted(LABELS_DIR.glob("label_v*.txt")):
+                if not lf.exists(): continue
+                for line in lf.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if "	" not in line: continue
+                    pp, tt = line.split("	", 1)
+                    if crop_pattern in pp:
+                        crop_name = Path(pp.strip()).name
+                        append_label(label_file, crop_name, tt.strip())
+            print(f"[Label] Re-used existing crop labels for {img_name}")
+        else:
+            # No prior crop labels — run region labeling now
             try:
-                text = gemini_extract_text(img_path)
+                result = label_image_by_regions(img_path, label_file, base_name=img_path.stem)
+                print(f"[Label] {img_name} → {result['labels_written']} crops labeled")
             except Exception as e:
-                print(f"[Label] Gemini failed for {img_name}: {e}")
-                text = "unknown"
-        append_label(label_file, img_name, text)  # duplicate-safe
+                print(f"[Label] Region labeling failed for {img_name}: {e}")
+                # Fallback: whole-image label
+                text = find_label_in_history(img_name) or "unknown"
+                append_label(label_file, img_name, text)
 
     save_state(state)
     await run_training(state)
@@ -797,6 +1057,13 @@ def backfill_processed_images():
 
 
 backfill_processed_images()
+
+# Pre-build the recursion-guard shim if PaddleOCR is already cloned
+if PADDLEOCR_DIR.exists():
+    patch_simple_dataset()
+    print("[Startup] Recursion guard shim ready.")
+else:
+    print("[Startup] PaddleOCR not cloned yet — shim will be built before first training.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -845,23 +1112,31 @@ async def upload_image(
 
     proc_result = preprocess_and_save(img_path)
 
+    # Label by detected regions (one label per crop = short strings = real accuracy)
     try:
-        text = gemini_extract_text(img_path)
+        label_result = label_image_by_regions(
+            img_path,
+            Path(state["label_file"]),
+            base_name=img_path.stem,
+        )
     except Exception as e:
         img_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Gemini failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Labeling failed: {e}")
 
-    append_label(Path(state["label_file"]), img_name, text)
     state["new_images"].append(img_name)
-    state["total_labels_written"] = len(state["new_images"])
+    state["total_labels_written"] = (
+        state.get("total_labels_written", 0) + label_result["labels_written"]
+    )
     save_state(state)
 
     collected = len(state["new_images"])
     response  = {
-        "session_id":       state["session_id"],
-        "model_version":    state["model_version"],
-        "image_saved":      img_name,
-        "extracted_text":   text,
+        "session_id":        state["session_id"],
+        "model_version":     state["model_version"],
+        "image_saved":       img_name,
+        "extracted_text":    label_result["whole_text"],
+        "region_crops":      label_result["crops"],        # per-crop labels
+        "labels_written":    label_result["labels_written"],
         "processed": {
             "gray":  proc_result.get("gray"),
             "otsu":  proc_result.get("otsu"),
@@ -871,7 +1146,8 @@ async def upload_image(
         "target":           NEW_IMAGES_PER_SESSION,
         "remaining":        max(0, NEW_IMAGES_PER_SESSION - collected),
         "status":           state["status"],
-        "message":          f"Image {collected}/{NEW_IMAGES_PER_SESSION} collected.",
+        "message":          f"Image {collected}/{NEW_IMAGES_PER_SESSION} collected. "
+                            f"{label_result['labels_written']} crop labels created.",
     }
 
     if collected >= NEW_IMAGES_PER_SESSION:
@@ -887,15 +1163,12 @@ async def upload_image(
 @app.get("/status")
 async def get_status():
     """
-    Full status including:
-    - Total unique images trained across all sessions
-    - Accuracy and loss per model version
-    - Current session progress
-    - Incremental chain
+    Full status — always reads fresh from disk, responds immediately even during training.
     """
-    sessions       = load_all_sessions()
-    model_scores   = get_all_model_scores()
-    total_trained  = count_total_unique_trained_images()
+    loop = asyncio.get_event_loop()
+    sessions      = await loop.run_in_executor(None, load_all_sessions)
+    model_scores  = await loop.run_in_executor(None, get_all_model_scores)
+    total_trained = await loop.run_in_executor(None, count_total_unique_trained_images)
     label_files    = sorted([p.name for p in LABELS_DIR.glob("label_v*.txt")])
     total_on_disk  = len([p for p in IMAGES_DIR.glob("*")
                           if p.suffix.lower() in {".jpg",".jpeg",".png",".bmp",".webp"}])
@@ -932,6 +1205,8 @@ async def get_status():
             "accuracy_pct":         current.get("accuracy"),
             "final_loss":           current.get("loss"),
             "error":                current.get("error"),
+            "training_phase":       current.get("training_phase"),
+            "training_log":         current.get("training_log", []),
         },
         "incremental_chain": {
             "trained_versions": trained_versions,
@@ -972,6 +1247,8 @@ async def get_session_status(session_id: str):
         "accuracy_pct":         state.get("accuracy"),
         "final_loss":           state.get("loss"),
         "error":                state["error"],
+        "training_phase":       state.get("training_phase"),
+        "training_log":         state.get("training_log", []),
         "progress": {
             "phase": (
                 "training"      if state["status"] == "training"
@@ -1039,6 +1316,19 @@ async def stop_training():
     # Clean up temp label files
     for tmp in LABELS_DIR.glob("_train_tmp_*.txt"):
         tmp.unlink(missing_ok=True)
+
+    # Rebuild the recursion guard shim so next training run is clean
+    if PADDLEOCR_DIR.exists():
+        # Restore simple_dataset.py if it was corrupted by an old patch
+        ds_path = PADDLEOCR_DIR / "ppocr" / "data" / "simple_dataset.py"
+        if ds_path.exists():
+            ds_src = ds_path.read_text(encoding="utf-8")
+            if "PATCHED_V7_RECURSION_GUARD" in ds_src or "AUTO-GENERATED by main.py" in ds_src:
+                import subprocess as _sp
+                _sp.run(["git", "checkout", "ppocr/data/simple_dataset.py"],
+                        cwd=str(PADDLEOCR_DIR), capture_output=True)
+                print("[Stop] simple_dataset.py restored to original via git")
+        patch_simple_dataset()  # Rebuild clean shim
 
     return {
         "message":       "Training stopped. System reset to idle. You can now upload new images.",
