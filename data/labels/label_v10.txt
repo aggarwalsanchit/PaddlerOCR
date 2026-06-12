@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v10_20260525155004_000.jpg	23.98 Alarm Furnace 1 24.00 123456
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v1_20260525064132_000.jpg	0034

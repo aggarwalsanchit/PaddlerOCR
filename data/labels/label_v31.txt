@@ -1,0 +1,8 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v31_20260529101257_000_crop00.png	238.2V
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v31_20260529101257_000_crop01.png	1/2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v31_20260529101257_000_crop02.png	238.3
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v31_20260529101257_000_crop03.png	2/3
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v31_20260529101257_000_crop04.png	0.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v31_20260529101257_000_crop05.png	3/1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v31_20260529101257_000_crop06.png	57.4kWh
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v12_20260526101610_000_crop00.png	LOC

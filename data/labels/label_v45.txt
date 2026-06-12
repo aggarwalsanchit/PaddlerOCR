@@ -1,0 +1,4 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v45_20260601111213_000_crop00.png	TM
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v4_20260525152547_000_crop00.png	999999
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v4_20260525152547_000_crop01.png	999999
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v4_20260525152547_000_crop02.png	999999

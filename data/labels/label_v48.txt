@@ -1,0 +1,5 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v48_20260601112553_000_crop00.png	OCT
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v48_20260601112553_000_crop01.png	24
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v9_20260525153305_000_crop00.png	EA DIP205G-4NLED
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v9_20260525153305_000_crop01.png	4x20 LED backlight
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v9_20260525153305_000_crop02.png	max. 150mA @ 4.2V

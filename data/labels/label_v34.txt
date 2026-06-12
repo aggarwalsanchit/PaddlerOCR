@@ -1,0 +1,9 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v34_20260529111113_000_crop00.png	238.2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v34_20260529111113_000_crop01.png	V
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v34_20260529111113_000_crop02.png	12
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v34_20260529111113_000_crop03.png	238.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v34_20260529111113_000_crop04.png	23
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000_crop00.png	23:09:13
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000_crop01.png	Welcome
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000_crop02.png	03/28/2016
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000_crop03.png	Insan Metal Co.

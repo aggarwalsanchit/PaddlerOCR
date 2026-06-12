@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v23_20260527043218_000.jpg	23:09:13 Welcome 03/28/2016 Insan Metal Co. Automatic Double Spiral Chain Link Fencing Mach Programmed and Automation By: Sana Tech Automation Mumbai 400072 India Email:sales@sanatechautomation.com sanatechautomation@gmail.com NEXT >>>
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v5_20260525152610_000.jpg	380.5

@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v49_20260601113647_000_crop00.png	abcdefghijklmnopqr
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v18_20260526140622_000.jpg	23:09:13 Welcome 03/28/2016 Insan Metal Co. Automatic Double Spiral Chain Link Fencing Maker Programmed and Automation By: Sana Tech Automation Mumbai 400072 India Email:sales@sanatechautomation.com sanatechautomation@gmail.com NEXT >>> CUTTER CLE INCH MAIN MOTOR INCH HOME POSITION LEFT SIDE ANUCKLER CUTTER

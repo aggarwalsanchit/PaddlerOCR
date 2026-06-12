@@ -1,0 +1,45 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop00.png	23.98
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop01.png	Alarm
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop02.png	Furnace 1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop03.png	24.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop04.png	1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop05.png	2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop06.png	3
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop07.png	4
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop08.png	5
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop09.png	6
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop10.png	23.98
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop11.png	Alarm
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop12.png	Furnace 1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop13.png	24.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop14.png	1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop15.png	2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop16.png	3
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop17.png	4
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop18.png	5
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop19.png	6
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop20.png	23.98
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop21.png	Alarm
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v41_20260601103606_000_crop22.png	Furnace 1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop00.png	0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop01.png	25
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop02.png	50
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop03.png	75
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop04.png	100
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop05.png	304.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop06.png	g/cm
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop07.png	SP
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop08.png	P304
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop09.png	C
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop10.png	AIM
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop11.png	Tune Man
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop12.png	0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop13.png	25
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop14.png	50
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop15.png	75
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop16.png	100
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop17.png	304.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop18.png	g/cm
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop19.png	SP
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop20.png	P304
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v38_20260601100610_000_crop21.png	C

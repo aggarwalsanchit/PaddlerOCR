@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v37_20260529125214_000_crop00.png	ENTER 1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v8_20260525153111_000.jpg	23.98

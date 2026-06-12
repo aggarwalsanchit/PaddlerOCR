@@ -1,0 +1,12 @@
+server1/
+venv/
+env/
+work/
+data/models/
+
+__pycache__/
+*.pyc
+
+*.pdparams
+*.pdmodel
+*.pdiparams

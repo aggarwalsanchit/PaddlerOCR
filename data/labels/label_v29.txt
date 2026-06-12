@@ -1,0 +1,3 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v29_20260529100321_000_crop00.png	LOC
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000_crop00.png	INOVANCE
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000_crop01.png	RUN

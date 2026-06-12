@@ -1,0 +1,18 @@
+{
+  "session_id": "session_v24_20260527133808",
+  "status": "error",
+  "new_images": [
+    "session_v24_20260527133808_000.jpg"
+  ],
+  "sampled_old": [
+    "session_v19_20260526141534_000.jpg"
+  ],
+  "label_file": "/home/rurux/Desktop/PaddlerOCR/data/labels/label_v24.txt",
+  "model_version": "v24",
+  "train_start": "2026-05-27T13:38:14.928324",
+  "train_end": "2026-05-29T04:46:29.458453",
+  "error": "Stopped manually via POST /stop",
+  "total_labels_written": 2,
+  "accuracy": null,
+  "loss": null
+}

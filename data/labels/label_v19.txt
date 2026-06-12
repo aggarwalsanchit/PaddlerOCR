@@ -1,0 +1,8 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000.jpg	23:09:13 Welcome 03/28/2016 Insan Metal Co. Automatic Double Spiral Chain Link Fencing mach Programmed and Automation By: Sana Tech Automation Mumbai 400072 India Email:sales@sanatechautomation.com sanatechautomation@gmail.com NEXT >>>
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v12_20260526101610_000.png	LOC △ ↺ 50.0 Hz 0179 LOC A ≡
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000.jpg	23:09:13 Welcome 03/28/2016 Insan Metal Co. Automatic Double Spiral Chain Link Fencing mach Programmed and Automation By: Sana Tech Automation Mumbai 400072 India Email:sales@sanatechautomation.com sanatechautomation@gmail.com NEXT >>>
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v12_20260526101610_000.png	LOC △ ↺ 50.0 Hz 0179 LOC A ≡
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000.jpg	23:09:13 Welcome 03/28/2016 Insan Metal Co. Automatic Double Spiral Chain Link Fencing mach Programmed and Automation By: Sana Tech Automation Mumbai 400072 India Email:sales@sanatechautomation.com sanatechautomation@gmail.com NEXT >>>
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v12_20260526101610_000.png	LOC △ ↺ 50.0 Hz 0179 LOC A ≡
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000.jpg	23:09:13 Welcome 03/28/2016 Insan Metal Co. Automatic Double Spiral Chain Link Fencing mach Programmed and Automation By: Sana Tech Automation Mumbai 400072 India Email:sales@sanatechautomation.com sanatechautomation@gmail.com NEXT >>>
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v12_20260526101610_000.png	LOC △ ↺ 50.0 Hz 0179 LOC A ≡

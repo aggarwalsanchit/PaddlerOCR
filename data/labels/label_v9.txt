@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v9_20260525153305_000.jpg	3.3V
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v8_20260525153111_000.jpg	23.98

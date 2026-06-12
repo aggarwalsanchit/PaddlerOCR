@@ -1,0 +1,8 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v13_20260526113142_000.png	Loc 50.0Hz 0.61 A
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v8_20260525153111_000.jpg	23.98
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v13_20260526113142_000.png	Loc 50.0Hz 0.61 A
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v8_20260525153111_000.jpg	23.98
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v13_20260526113142_000.png	Loc 50.0Hz 0.61 A
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v8_20260525153111_000.jpg	23.98
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v13_20260526113142_000.png	Loc 50.0Hz 0.61 A
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v8_20260525153111_000.jpg	23.98

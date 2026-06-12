@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v11_20260525155032_000.png	LOC 0.61 50.0Hz A
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v9_20260525153305_000.jpg	3.3V

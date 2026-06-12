@@ -1,0 +1,23 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop00.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop01.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop02.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop03.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop04.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop05.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop06.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop07.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop08.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop09.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop10.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop11.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop12.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop13.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop14.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop15.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop16.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop17.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop18.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop19.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v30_20260529100559_000_crop20.png	50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v17_20260526131309_000_crop00.png	TRENDS
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v17_20260526131309_000_crop01.png	24-03-2026 | 12:43:27

@@ -1,0 +1,4 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v43_20260601105900_000_crop00.png	238.5
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v7_20260525152936_000_crop00.png	50.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v7_20260525152936_000_crop01.png	Hz
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v7_20260525152936_000_crop02.png	50.0

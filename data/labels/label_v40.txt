@@ -1,0 +1,35 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop00.png	316.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop01.png	SP1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop02.png	258.2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop03.png	°C
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop04.png	1 2 3 4 5 6
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop05.png	316.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop06.png	SP1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop07.png	258.2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop08.png	°C
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop09.png	1 2 3 4 5 6
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop10.png	316.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop11.png	SP1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop12.png	258.2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop13.png	°C
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop14.png	1 2 3 4 5 6
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop15.png	316.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop16.png	SP1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop17.png	258.2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop18.png	°C
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop19.png	1 2 3 4 5 6
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop20.png	316.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop21.png	SP1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop22.png	258.2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop23.png	°C
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop24.png	1 2 3 4 5 6
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop25.png	316.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop26.png	SP1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop27.png	258.2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop28.png	°C
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop29.png	1 2 3 4 5 6
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop30.png	316.0
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop31.png	SP1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v40_20260601102518_000_crop32.png	258.2
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v17_20260526131309_000_crop00.png	TRENDS
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v17_20260526131309_000_crop01.png	24-03-2026 | 12:43:27

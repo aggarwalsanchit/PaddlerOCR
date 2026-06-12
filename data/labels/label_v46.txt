@@ -1,0 +1,17 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v46_20260601111529_000_crop00.png	* EA DIP205G-4NLED
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop00.png	FREE
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop01.png	0.034
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop02.png	ELECTRONIC SWITCHES
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop03.png	FREE
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop04.png	0.034
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop05.png	ELECTRONIC SWITCHES
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop06.png	FREE
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop07.png	0.034
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop08.png	ELECTRONIC SWITCHES
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop09.png	FREE
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop10.png	0.034
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop11.png	ELECTRONIC SWITCHES
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop12.png	FREE
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop13.png	0.034
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop14.png	ELECTRONIC SWITCHES
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000_crop15.png	FREE

@@ -1,0 +1,14 @@
+{
+  "session_id": "session_v1_20260525064132",
+  "status": "error",
+  "new_images": [
+    "session_v1_20260525064132_000.jpg"
+  ],
+  "sampled_old": [],
+  "label_file": "/home/rurux/Desktop/PaddlerOCR/data/labels/label_v1.txt",
+  "model_version": "v1",
+  "train_start": "2026-05-25T07:04:19.720109",
+  "train_end": null,
+  "error": "Training finished but no .pdparams in /home/rurux/Desktop/PaddlerOCR/data/models/v1. Check /home/rurux/Desktop/PaddlerOCR/data/models/v1/train.log",
+  "total_labels_written": 1
+}

@@ -1,0 +1,8 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000.png	INOVANCE RUN REMOTE FWD/REV TUNE/TC 50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v6_20260525152719_000.jpg	38.5
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000.png	INOVANCE RUN REMOTE FWD/REV TUNE/TC 50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v6_20260525152719_000.jpg	38.5
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000.png	INOVANCE RUN REMOTE FWD/REV TUNE/TC 50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v6_20260525152719_000.jpg	38.5
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000.png	INOVANCE RUN REMOTE FWD/REV TUNE/TC 50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v6_20260525152719_000.jpg	38.5

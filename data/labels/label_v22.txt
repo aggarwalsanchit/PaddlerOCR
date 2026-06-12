@@ -1,0 +1,8 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v22_20260526152835_000.jpg	EA DIP205G-4NLED 4x20 LED backlight max. 150mA @ 4.2V 3.3V or 5V supply
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000.png	INOVANCE RUN REMOTE FWD/REV TUNE/TC 50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v22_20260526152835_000.jpg	EA DIP205G-4NLED 4x20 LED backlight max. 150mA @ 4.2V 3.3V or 5V supply
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000.png	INOVANCE RUN REMOTE FWD/REV TUNE/TC 50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v22_20260526152835_000.jpg	EA DIP205G-4NLED 4x20 LED backlight max. 150mA @ 4.2V 3.3V or 5V supply
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000.png	INOVANCE RUN REMOTE FWD/REV TUNE/TC 50.00
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v22_20260526152835_000.jpg	EA DIP205G-4NLED 4x20 LED backlight max. 150mA @ 4.2V 3.3V or 5V supply
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v16_20260526121240_000.png	INOVANCE RUN REMOTE FWD/REV TUNE/TC 50.00

@@ -1,0 +1,8 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v15_20260526121056_000.png	SELEC MFM383A 238.2 1 V 238.5 2 0.0 23 57.4 3 kWh 1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v13_20260526113142_000.png	Loc 50.0Hz 0.61 A
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v15_20260526121056_000.png	SELEC MFM383A 238.2 1 V 238.5 2 0.0 23 57.4 3 kWh 1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v13_20260526113142_000.png	Loc 50.0Hz 0.61 A
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v15_20260526121056_000.png	SELEC MFM383A 238.2 1 V 238.5 2 0.0 23 57.4 3 kWh 1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v13_20260526113142_000.png	Loc 50.0Hz 0.61 A
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v15_20260526121056_000.png	SELEC MFM383A 238.2 1 V 238.5 2 0.0 23 57.4 3 kWh 1
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v13_20260526113142_000.png	Loc 50.0Hz 0.61 A

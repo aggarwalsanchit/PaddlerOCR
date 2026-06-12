@@ -1,0 +1,16 @@
+{
+  "session_id": "session_v5_20260525152610",
+  "status": "done",
+  "new_images": [
+    "session_v5_20260525152610_000.jpg"
+  ],
+  "sampled_old": [
+    "session_v2_20260525070655_000.jpg"
+  ],
+  "label_file": "/home/rurux/Desktop/PaddlerOCR/data/labels/label_v5.txt",
+  "model_version": "v5",
+  "train_start": "2026-05-25T15:26:13.300777",
+  "train_end": "2026-05-25T15:26:30.268604",
+  "error": null,
+  "total_labels_written": 2
+}

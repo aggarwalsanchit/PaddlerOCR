@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v7_20260525152936_000.jpg	50.0Hz
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000.jpg	0034

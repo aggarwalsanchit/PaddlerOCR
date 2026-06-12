@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v12_20260526101610_000.png	LOC △ ↺ 50.0 Hz 0179 LOC A ≡
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v10_20260525155004_000.jpg	23.98 Alarm Furnace 1 24.00 123456

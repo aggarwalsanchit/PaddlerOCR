@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v25_20260529044640_000.jpg	ENTER 1 FOR HELP
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v2_20260525070655_000.jpg	0034

@@ -1,0 +1,6 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v54_20260609163521_000_crop00.png	24
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v54_20260609163521_000_crop01.png	°C
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v54_20260609163521_000_crop02.png	Set
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v54_20260609163521_000_crop03.png	24
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v54_20260609163521_000_crop04.png	24
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v32_20260529101550_000_crop00.png	LOC

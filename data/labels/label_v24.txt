@@ -1,0 +1,2 @@
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v24_20260527133808_000.jpg	SELEC 2 MFM383A 238.2 V 12 238.2 23 0.0 31 57.4 kWh
+/home/rurux/Desktop/PaddlerOCR/data/images/session_v19_20260526141534_000.jpg	23:09:13 Welcome 03/28/2016 Insan Metal Co. Automatic Double Spiral Chain Link Fencing mach Programmed and Automation By: Sana Tech Automation Mumbai 400072 India Email:sales@sanatechautomation.com sanatechautomation@gmail.com NEXT >>>
