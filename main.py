@@ -948,10 +948,19 @@ async def run_training(state: dict):
     save_state(state)
 
 
-async def fire_next_session_from_queue(background_tasks: BackgroundTasks):
+async def fire_next_session_from_queue(
+    background_tasks: BackgroundTasks,
+    session_id: Optional[str] = None,
+    version: Optional[str] = None,
+):
     """
     Take the next batch from the queue and start a training session.
     Called automatically after each session completes.
+
+    If session_id/version are provided (pre-computed by the caller, e.g. /upload
+    so it can return the correct session_id immediately), reuse them instead of
+    generating new ones — keeps the id returned to the client in sync with the
+    id the background task actually trains under.
     """
     if queue_size() == 0:
         print("[Queue] Empty — no more sessions to fire")
@@ -965,8 +974,9 @@ async def fire_next_session_from_queue(background_tasks: BackgroundTasks):
     old_available = get_old_images(exclude=batch)
     sampled       = random.sample(old_available, min(OLD_IMAGES_SAMPLE, len(old_available)))
 
-    version    = next_version()
-    session_id = f"session_{version}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    version    = version or next_version()
+    session_id = session_id or f"session_{version}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+
     label_path = (LABELS_DIR / f"label_{version}.txt").resolve()
     label_path.touch()
 
@@ -1066,8 +1076,9 @@ async def upload_image(
 ):
     """
     Upload one image. Always accepted — goes into queue.
-    If queue reaches NEW_IMAGES_PER_SESSION threshold, training fires automatically.
-    Never blocks — even if training is running, uploads are queued.
+    If queue reaches NEW_IMAGES_PER_SESSION threshold, training fires automatically,
+    and a NEW session_id/version is created right here so the response reflects
+    the session that will actually train this image.
     """
     # Save image
     suffix   = Path(file.filename or "image.jpg").suffix.lower() or ".jpg"
@@ -1094,9 +1105,19 @@ async def upload_image(
     current_state = load_state()
     is_training   = current_state.get("status") == "training"
 
+    will_fire = (qs >= NEW_IMAGES_PER_SESSION) and not is_training
+
+    # If this upload crosses the threshold, mint the session id NOW so the
+    # response and the background training task agree on the same id.
+    new_session_id = None
+    new_version    = None
+    if will_fire:
+        new_version    = next_version()
+        new_session_id = f"session_{new_version}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+
     response = {
-        "session_id":       current_state.get("session_id"),
-        "model_version":    current_state.get("model_version"),
+        "session_id":       new_session_id if will_fire else current_state.get("session_id"),
+        "model_version":    new_version if will_fire else current_state.get("model_version"),
         "image_saved":      img_name,
         "extracted_text":   text,
         "region_crops":     [],                          # kept for API compatibility
@@ -1109,7 +1130,7 @@ async def upload_image(
         "new_images_count": qs,
         "target":           NEW_IMAGES_PER_SESSION,
         "remaining":        max(0, NEW_IMAGES_PER_SESSION - qs),
-        "status":           "queued_training_running" if is_training else "collecting",
+        "status":           "queued_training_running" if is_training else ("training_starting" if will_fire else "collecting"),
         "queue": {
             "pending_images":      qs,
             "sessions_remaining":  queue_sessions_remaining(),
@@ -1119,19 +1140,124 @@ async def upload_image(
         "message": (
             f"Image queued. Queue: {qs} images. Training running — will fire after current session."
             if is_training else
-            f"Image {qs}/{NEW_IMAGES_PER_SESSION} in queue."
+            (f"Queue threshold reached ({qs} images)! Starting training session {new_session_id} automatically."
+             if will_fire else
+             f"Image {qs}/{NEW_IMAGES_PER_SESSION} in queue.")
         ),
     }
 
     # Fire training if threshold reached and not currently training
-    if qs >= NEW_IMAGES_PER_SESSION and not is_training:
-        response["message"] = (
-            f"Queue threshold reached ({qs} images)! "
-            f"Starting training session automatically."
+    if will_fire:
+        background_tasks.add_task(
+            fire_next_session_from_queue,
+            background_tasks,
+            new_session_id,
+            new_version,
         )
-        background_tasks.add_task(fire_next_session_from_queue, background_tasks)
 
     return JSONResponse(content=response)
+
+@app.get("/status-lite")
+async def get_status_lite():
+    """
+    Lightweight status API — summary, thresholds, and ALL sessions:
+    previous (completed/error), current (collecting/training), and
+    upcoming (still sitting in queue, not yet started).
+    """
+    loop = asyncio.get_event_loop()
+    sessions      = await loop.run_in_executor(None, load_all_sessions)
+    model_scores  = await loop.run_in_executor(None, get_all_model_scores)
+    total_trained = await loop.run_in_executor(None, count_total_unique_trained_images)
+    total_on_disk = len([p for p in IMAGES_DIR.glob("*")
+                          if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}])
+    total_proc    = len(list(PROCESSED_DIR.glob("*_gray.png")))
+    infer_ready   = find_latest_inference_dir()
+    trained_versions = [m["version"] for m in model_scores if m["has_model"]]
+    current       = load_state()
+    qs            = queue_size()
+    is_training   = current.get("status") == "training"
+
+    # ── Previous sessions: everything persisted to disk, excluding the
+    #    one that's currently active (collecting/training) so it isn't duplicated ──
+    current_id = current.get("session_id")
+    previous_sessions = [
+        {
+            "session_id":          s.get("session_id"),
+            "status":              s.get("status"),
+            "model_version":       s.get("model_version"),
+            "train_start":         s.get("train_start"),
+            "train_end":           s.get("train_end"),
+            "total_labels_written": s.get("total_labels_written", 0),
+            "error":               s.get("error"),
+        }
+        for s in sessions
+        if s.get("session_id") != current_id
+    ]
+
+    # ── Current session: whatever is actively collecting/training/done/idle ──
+    current_session = None
+    if current.get("session_id"):
+        current_session = {
+            "session_id":           current.get("session_id"),
+            "status":               current.get("status", "idle"),
+            "model_version":        current.get("model_version"),
+            "train_start":          current.get("train_start"),
+            "train_end":            current.get("train_end"),
+            "total_labels_written": current.get("total_labels_written", 0),
+            "error":                current.get("error"),
+        }
+
+    # ── Upcoming sessions: queue not yet consumed, chunked into the
+    #    batches that WILL become sessions, in firing order ──
+    pending_queue = queue_load()
+    upcoming_sessions = []
+    if pending_queue:
+        # version numbers continue on from the highest version seen anywhere
+        existing_versions = set()
+        for p in LABELS_DIR.glob("label_v*.txt"):
+            try: existing_versions.add(int(p.name.replace("label_v", "").replace(".txt", "")))
+            except ValueError: pass
+        next_v = max(existing_versions, default=0) + 1
+
+        # if a session is currently collecting/training, upcoming starts after it
+        for i in range(0, len(pending_queue), NEW_IMAGES_PER_SESSION):
+            batch = pending_queue[i:i + NEW_IMAGES_PER_SESSION]
+            upcoming_sessions.append({
+                "session_id":     None,            # not created yet
+                "model_version":  f"v{next_v}",
+                "status":         "queued",
+                "new_images":     batch,
+                "new_images_count": len(batch),
+                "will_fire_when": (
+                    "current training/collecting session finishes"
+                    if (is_training or current.get("status") == "collecting")
+                    else "immediately (threshold reached)" if len(batch) >= NEW_IMAGES_PER_SESSION
+                    else f"{NEW_IMAGES_PER_SESSION - len(batch)} more image(s) uploaded"
+                ),
+            })
+            next_v += 1
+
+    return {
+        "summary": {
+            "total_images_trained":   total_trained,
+            "total_images_on_disk":   total_on_disk,
+            "total_processed_images": total_proc,
+            "total_sessions":         len(sessions),
+            "trained_versions_count": len(trained_versions),
+            "latest_inference_model": infer_ready.parent.name if infer_ready else None,
+            "current_status":         current.get("status", "idle"),
+        },
+        "thresholds": {
+            "new_images_per_session": NEW_IMAGES_PER_SESSION,
+            "old_images_sampled":     OLD_IMAGES_SAMPLE,
+            "total_before_training":  TOTAL_BEFORE_TRAIN,
+        },
+        "sessions": {
+            "previous": previous_sessions,
+            "current":  current_session,
+            "upcoming": upcoming_sessions,
+        },
+    }
 
 
 @app.get("/status")
